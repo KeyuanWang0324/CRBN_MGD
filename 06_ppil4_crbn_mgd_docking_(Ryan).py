@@ -48,7 +48,7 @@ from rdkit import RDLogger
 
 RDLogger.DisableLog("rdApp.*")
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 RECEPTOR_PDBQT = os.path.join(SCRIPT_DIR, "PPIL4_receptor_(Ryan).pdbqt")
 
 # Docking box: centroid of PPIL4 catalytic-pocket residues homology-mapped
@@ -235,7 +235,10 @@ if __name__ == "__main__":
     parser.add_argument("--smiles-file", help="File of SMILES (optionally 'SMILES,Name' per line)")
     parser.add_argument("--rebuild-receptor", action="store_true",
                          help="Re-fetch PPIL4 structure and rebuild the receptor PDBQT/box")
-    args = parser.parse_args()
+    # In a notebook/Colab cell there is no "__file__" and sys.argv holds the
+    # Jupyter kernel's own flags (e.g. "-f kernel-xxx.json"), not ours -- so
+    # parse real CLI args only when run as a standalone script.
+    args = parser.parse_args(sys.argv[1:] if "__file__" in globals() else [])
 
     if args.rebuild_receptor or not os.path.exists(RECEPTOR_PDBQT):
         build_ppil4_receptor()
