@@ -236,71 +236,35 @@ if __name__ == "__main__":
     print("\nSaved X_crbn_fingerprints.npy and Y_crbn_binders.npy")
 
 """
-CRBN Binder Classifier -- Random Forest, 80/20 Split with LOOCV on Training Set
+CRBN Binder Classifier -- Random Forest, 80/20 Held-Out Split
 ==================================================================================
 Approach:
   1. Split data: 80% train / 20% test (held out, untouched until the end).
-  2. Run Leave-One-Out Cross-Validation (LOOCV) WITHIN the 80% training set
-     to get a robust internal estimate of model performance (ROC/AUC).
-  3. Train a final Random Forest on the full 80% training set.
-  4. Evaluate that final model once on the untouched 20% test set
-     (ROC/AUC on true held-out data).
+  2. Train a Random Forest on the full 80% training set.
+  3. Evaluate that model once on the untouched 20% test set (ROC/AUC on
+     true held-out data).
 
-This avoids data leakage: the 20% test set is never touched during LOOCV,
-so its final ROC/AUC reflects genuine generalization performance.
-
-NOTE ON COST: LOOCV on the training set trains one Random Forest per
-training sample (i.e., ~80% of N models). This is computationally
-expensive -- see N_ESTIMATORS below for a runtime/stability tradeoff.
+(Earlier version also ran Leave-One-Out CV within the training set --
+dropped because it trains one Random Forest per training sample, which
+was too slow to be worth it; the held-out test set alone already gives an
+unbiased AUC estimate.)
 """
 
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split, LeaveOneOut
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_curve, roc_auc_score, classification_report, confusion_matrix
 
 RANDOM_STATE = 42
 TEST_SIZE = 0.20        # 20% held out as final test set
-N_ESTIMATORS = 200      # reduced to keep LOOCV runtime manageable
+N_ESTIMATORS = 200
 
 
 def load_data():
     X = np.load("X_crbn_fingerprints.npy")
     Y = np.load("Y_crbn_binders.npy")
     return X, Y
-
-
-def run_loocv(X_train, y_train):
-    """
-    LOOCV within the training set: for each training sample, train on all
-    other training samples and predict on the one held out. Returns
-    per-sample true labels, predicted labels, and predicted probabilities.
-    """
-    loo = LeaveOneOut()
-    n = X_train.shape[0]
-
-    y_true = np.zeros(n, dtype=int)
-    y_pred = np.zeros(n, dtype=int)
-    y_proba = np.zeros(n, dtype=float)
-
-    for i, (tr_idx, te_idx) in enumerate(loo.split(X_train)):
-        clf = RandomForestClassifier(
-            n_estimators=N_ESTIMATORS,
-            random_state=RANDOM_STATE,
-            n_jobs=-1,
-            class_weight="balanced"
-        )
-        clf.fit(X_train[tr_idx], y_train[tr_idx])
-
-        y_true[te_idx[0]] = y_train[te_idx[0]]
-        y_proba[te_idx[0]] = clf.predict_proba(X_train[te_idx])[:, 1][0]
-        y_pred[te_idx[0]] = clf.predict(X_train[te_idx])[0]
-
-        if (i + 1) % 100 == 0 or (i + 1) == n:
-            print(f"  LOOCV progress: {i + 1}/{n}")
-
-    return y_true, y_pred, y_proba
 
 
 def evaluate(y_true, y_pred, y_proba, label=""):
@@ -347,17 +311,7 @@ if __name__ == "__main__":
     print(f"Train set: {X_train.shape[0]} samples ({1 - TEST_SIZE:.0%})")
     print(f"Test set:  {X_test.shape[0]} samples ({TEST_SIZE:.0%})\n")
 
-    # --- Step 2: LOOCV within the training set ---
-    print(f"Running LOOCV on {X_train.shape[0]} training samples (this may take a while)...")
-    loo_true, loo_pred, loo_proba = run_loocv(X_train, y_train)
-    loo_auc = evaluate(loo_true, loo_pred, loo_proba, label="Training LOOCV")
-    plot_roc(
-        loo_true, loo_proba, loo_auc,
-        title="ROC Curve -- CRBN Binder (Training Set LOOCV)",
-        filename="crbn_roc_curve_train_loocv.png"
-    )
-
-    # --- Step 3: train final model on full training set ---
+    # --- Step 2: train final model on full training set ---
     final_clf = RandomForestClassifier(
         n_estimators=N_ESTIMATORS,
         random_state=RANDOM_STATE,
@@ -366,7 +320,7 @@ if __name__ == "__main__":
     )
     final_clf.fit(X_train, y_train)
 
-    # --- Step 4: evaluate final model on untouched 20% test set ---
+    # --- Step 3: evaluate final model on untouched 20% test set ---
     test_pred = final_clf.predict(X_test)
     test_proba = final_clf.predict_proba(X_test)[:, 1]
     test_auc = evaluate(y_test, test_pred, test_proba, label="Held-out Test Set")
@@ -377,5 +331,4 @@ if __name__ == "__main__":
     )
 
     print("\n=== Summary ===")
-    print(f"Training LOOCV AUC: {loo_auc:.4f}")
     print(f"Held-out Test AUC:  {test_auc:.4f}")
