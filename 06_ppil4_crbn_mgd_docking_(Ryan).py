@@ -286,21 +286,30 @@ if __name__ == "__main__":
 """
 Setup notes
 -----------
-This machine did not have Homebrew/Boost installed when this script was
-written, so AutoDock Vina (which needs Boost to build) could not be
-installed yet. Everything else in this pipeline IS working and tested:
+Full pipeline is built, installed, and tested end-to-end (sanity-checked
+against thalidomide/lenalidomide/pomalidomide -- see docstring at top):
   - PPIL4 AlphaFold structure fetched (Q8WUA2, v6)
   - Catalytic PPIase domain located via per-residue pLDDT (residues ~1-180;
     rest of the 492-aa model is a low-confidence disordered tail)
   - Pocket homology-mapped from human CypA's active site via BLOSUM62
     global alignment (Bio.Align) -- 13/13 active-site residues mapped
-  - Receptor PDBQT + docking box built successfully with meeko's
-    mk_prepare_receptor.py
-  - Ligand prep (RDKit 3D embedding + meeko PDBQT writer) code path is
-    standard meeko/RDKit usage
+  - Receptor PDBQT + docking box built with meeko's mk_prepare_receptor.py
+  - Ligand prep: RDKit 3D embedding + meeko PDBQT writer
+  - AutoDock Vina installed and working
 
-Once Boost is available:
-    brew install boost
-    pip3 install vina
-then this script runs end-to-end with no other changes needed.
+Local (macOS): Vina has no macOS wheel on PyPI, so it builds from source
+and needs Boost + SWIG. Homebrew's current Boost (1.90) also needs a
+newer C++ standard than Vina's setup.py hardcodes:
+    brew install boost swig
+    # patch vina's sdist: change "-std=c++11" -> "-std=c++17" in setup.py
+    # (pip install vina alone will fail on this machine's Boost otherwise)
+    CONDA_DEFAULT_ENV=x CONDA_PREFIX=/opt/homebrew pip3 install vina
+The CONDA_* env vars aren't about conda -- vina's setup.py only searches
+conda-env paths, /usr/local/include, or /usr/include for Boost, and Apple
+Silicon Homebrew lives at /opt/homebrew, so this fakes a "conda env" to
+point it there without needing sudo/symlinks into /usr/local.
+
+Colab (Linux x86_64): none of the above is needed -- Vina ships a
+prebuilt manylinux wheel there, so a plain `pip install vina` just works.
+See the Step 4 setup cell in 03_mgd_ppil4_crbn_pipeline_(Ryan).ipynb.
 """
