@@ -1063,9 +1063,41 @@ def print_results_table(results):
     print("=" * len(header) + "\n")
 
 
+DEFAULT_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "candidates.csv")
+RESULTS_CSV = os.path.join(SCRIPT_DIR, "mgd_scores_(Ryan).csv")
+
+
+def read_candidates_file(path):
+    """Parse a file of one SMILES per line (optionally 'SMILES,Name')."""
+    candidates = []
+    with open(path) as f:
+        for i, line in enumerate(f):
+            line = line.strip()
+            if not line:
+                continue
+            parts = line.split(",")
+            smi = parts[0].strip()
+            nm = parts[1].strip() if len(parts) > 1 else f"cand_{i}"
+            candidates.append((nm, smi))
+    return candidates
+
+
+def write_results_csv(results, path):
+    import csv
+    fieldnames = ["name", "smiles", "p_crbn_glue", "ppil4_affinity_kcal_mol", "p_ppil4_bind",
+                  "mgd_composite_score", "error"]
+    with open(path, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for r in results:
+            writer.writerow({k: r.get(k, "") for k in fieldnames})
+    print(f"Wrote {path}")
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--smiles-file", help="File of SMILES (optionally 'SMILES,Name' per line)")
+    parser.add_argument("--smiles-file", help="File of SMILES (optionally 'SMILES,Name' per line); "
+                                               f"defaults to candidates.csv if present in {SCRIPT_DIR}")
     parser.add_argument("--sanity-check", action="store_true",
                          help="Score known CRBN glues (thalidomide/lenalidomide/pomalidomide) instead of prompting")
     parser.add_argument("--rebuild-receptor", action="store_true",
@@ -1082,27 +1114,22 @@ if __name__ == "__main__":
     crbn_glue_clf = RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1, class_weight="balanced")
     crbn_glue_clf.fit(X, Y)
 
-    # --- everything above this point is setup; the interactive SMILES
-    # --- prompt (when no --smiles-file / --sanity-check is passed) is the
-    # --- last thing that runs in the whole script.
-    if args.smiles_file:
-        candidates = []
-        with open(args.smiles_file) as f:
-            for i, line in enumerate(f):
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split(",")
-                smi = parts[0].strip()
-                nm = parts[1].strip() if len(parts) > 1 else f"cand_{i}"
-                candidates.append((nm, smi))
-    elif args.sanity_check:
+    # Priority: --sanity-check > --smiles-file > candidates.csv (if present) >
+    # interactive prompt as a last resort.
+    if args.sanity_check:
         candidates = SANITY_CHECK_CANDIDATES
+    elif args.smiles_file:
+        candidates = read_candidates_file(args.smiles_file)
+    elif os.path.exists(DEFAULT_CANDIDATES_CSV):
+        print(f"No --smiles-file given; scoring {DEFAULT_CANDIDATES_CSV}")
+        candidates = read_candidates_file(DEFAULT_CANDIDATES_CSV)
     else:
         candidates = get_manual_candidates()
 
     if not candidates:
         print("No SMILES entered -- nothing to score.")
     else:
+        print(f"Scoring {len(candidates)} candidates...")
         results = score_candidates(candidates, crbn_glue_clf, tmp_dir=os.path.join(SCRIPT_DIR, "docking_tmp"))
         print_results_table(results)
+        write_results_csv(results, RESULTS_CSV)

@@ -85,10 +85,29 @@ POSE_OVERLAP_THRESHOLD = 0.3
 # Same CRBN-glutarimide degron chemotype as thalidomide/lenalidomide/pomalidomide
 # (scored P(CRBN-glue)=1.000 by the Step-3 RF classifier), each with a
 # different candidate extension -- picked from crbn_glue_compounds_(Ryan).txt.
-CANDIDATES = [
+_FALLBACK_CANDIDATES = [
     ("novel_candidate_1", "O=C1CCC(N2Cc3cc(NC(=O)c4cn5cc(Cl)ccc5n4)ccc3C2=O)C(=O)N1"),
-    # add more (name, SMILES) pairs here
 ]
+
+# Top-ranked subset from 01's 500 thalidomide analogs, filtered by 03+04's
+# combined rank-aggregated scoring -- see build_active_candidates() in
+# 04_crbn_binder_scaffold_model_(Ryan).py for how this file gets built.
+ACTIVE_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "active_candidates_(Ryan).csv")
+
+
+def load_candidates():
+    if os.path.exists(ACTIVE_CANDIDATES_CSV):
+        import csv
+        with open(ACTIVE_CANDIDATES_CSV) as f:
+            candidates = [(row["name"], row["smiles"]) for row in csv.DictReader(f)]
+        print(f"Loaded {len(candidates)} candidates from {ACTIVE_CANDIDATES_CSV}")
+        return candidates
+    print(f"{ACTIVE_CANDIDATES_CSV} not found -- using the single fallback candidate. "
+          "Run 01, then 03 and 04, to generate a real screened candidate list.")
+    return _FALLBACK_CANDIDATES
+
+
+CANDIDATES = load_candidates()
 
 
 def thalidomide_box(reference_pdb, padding=14, min_size=20):
