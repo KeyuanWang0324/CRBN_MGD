@@ -20,6 +20,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -99,6 +101,27 @@ def write_actpass_file(active, passive, out_path):
 def run(cmd, **kwargs):
     print("+", " ".join(cmd))
     subprocess.run(cmd, check=True, **kwargs)
+
+
+def run_with_heartbeat(cmd, interval=20, **kwargs):
+    """Like run(), but prints a heartbeat line every `interval` seconds while
+    the subprocess is silent -- haddock3 goes quiet for tens of seconds to a
+    few minutes during CNS computation, which otherwise looks like it hung."""
+    print("+", " ".join(cmd))
+    start = time.time()
+    stop = threading.Event()
+
+    def heartbeat():
+        while not stop.wait(interval):
+            print(f"    ... still running ({int(time.time() - start)}s elapsed)")
+
+    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread.start()
+    try:
+        subprocess.run(cmd, check=True, **kwargs)
+    finally:
+        stop.set()
+        thread.join()
 
 
 def print_table(rows, columns, title=None):
@@ -213,7 +236,7 @@ ambig_fname = "{ambig_tbl}"
     if os.path.exists(haddock_run_dir):
         print(f"Removing existing run_dir from a previous run: {haddock_run_dir}")
         shutil.rmtree(haddock_run_dir)
-    run(["haddock3", cfg_path])
+    run_with_heartbeat(["haddock3", cfg_path])
 
     print_capri_summary(haddock_run_dir)
 
@@ -240,8 +263,9 @@ def main():
         f.readline()  # header
         screened = [line.strip().split("\t") for line in f if line.strip()]
     screened = [
-        {"name": name, "crbn_affinity": float(crbn), "ppil4_affinity": float(ppil4), "combined_affinity": float(combined)}
-        for name, crbn, ppil4, combined in screened
+        {"name": name, "crbn_affinity": float(crbn), "ppil4_affinity": float(ppil4),
+         "combined_affinity": float(combined), "overlap": float(overlap), "consistent": consistent == "True"}
+        for name, crbn, ppil4, combined, overlap, consistent in screened
     ]
     screened.sort(key=lambda r: r["combined_affinity"])
 
@@ -251,6 +275,11 @@ def main():
           f"{', '.join(r['name'] for r in selected)}")
     if skipped:
         print(f"Skipping {len(skipped)} lower-ranked candidates: {', '.join(r['name'] for r in skipped)}")
+    flagged = [r["name"] for r in selected if not r["consistent"]]
+    if flagged:
+        print(f"NOTE: {', '.join(flagged)} had no geometrically-compatible CRBN/PPIL4 Vina pose pair in 06 "
+              "(see that run's output) -- proceeding anyway since 07's restraints don't depend on the PPIL4 "
+              "Vina pose, only the CRBN contact residues.")
 
     print("== Renaming PPIL4 chain A -> B (HADDOCK3 requires unique chain/segids per partner) ==")
     with open(PPIL4_PDB, "w") as out:

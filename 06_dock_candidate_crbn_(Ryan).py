@@ -23,6 +23,19 @@ rather than independently occupying a pocket on it. Docking each candidate
 into PPIL4's (unrelated, enzymatic) active site is a cheap second signal
 for ranking, not a claim about the true ternary mechanism.
 
+Since the CRBN and PPIL4 dockings are independent, nothing stops Vina's
+best pose for each from using the *same* substructure of the ligand to
+make its key contacts -- which is geometrically impossible in reality (the
+molecule can't bury the same atoms in two separate protein pockets at
+once). To guard against that, both dockings keep their top N_POSES modes
+(Vina computes these internally either way), and for each candidate we
+search all CRBN-pose x PPIL4-pose combinations for the best-combined-
+affinity pair whose ligand-contact atoms don't substantially overlap
+(POSE_OVERLAP_THRESHOLD). If no combination clears that bar, the candidate
+is flagged rather than silently reporting an inconsistent pair. This only
+affects screening/ranking quality -- 07's actual restraints don't depend
+on 06's PPIL4 pose at all, only the fixed CypA-homology residue mapping.
+
 This is a fast screening pass (Vina only, no HADDOCK3) meant to rank many
 candidates by combined (CRBN + PPIL4) predicted affinity. 07 then runs the
 slow full ternary HADDOCK3 docking on only the top-ranked candidates --
@@ -62,6 +75,12 @@ CRBN_RECEPTOR_PDB = os.path.join(SCRIPT_DIR, "CRBN_receptor_thalidomide_Ryan.pdb
 PPIL4_SOURCE_PDB = os.path.join(SCRIPT_DIR, "PPIL4_alphafold_(Ryan).pdb")
 OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
 SCREENING_SUMMARY_TSV = os.path.join(OUT_DIR, "screening_summary.tsv")
+
+# Vina poses considered per protein when picking a mutually-compatible
+# CRBN/PPIL4 pair, and the max fraction of shared ligand-contact atoms
+# between them still considered geometrically plausible.
+N_POSES = 10
+POSE_OVERLAP_THRESHOLD = 0.3
 
 # Same CRBN-glutarimide degron chemotype as thalidomide/lenalidomide/pomalidomide
 # (scored P(CRBN-glue)=1.000 by the Step-3 RF classifier), each with a
@@ -172,38 +191,52 @@ def smiles_to_ligand_pdbqt(smiles, out_path):
         f.write(pdbqt_string)
 
 
-def dock_ligand(receptor_pdbqt, ligand_pdbqt, center, size, out_poses_pdbqt, exhaustiveness=16):
+def parse_poses(pdbqt_path):
+    """Return each MODEL's ligand atoms as (name, x, y, z, atom_type) tuples,
+    in file atom order -- consistent across independent dockings of the same
+    ligand pdbqt, so atom index doubles as a stable atom identity."""
+    poses = []
+    current = None
+    with open(pdbqt_path) as f:
+        for line in f:
+            if line.startswith("MODEL"):
+                current = []
+            elif line.startswith("ENDMDL"):
+                if current is not None:
+                    poses.append(current)
+                current = None
+            elif (line.startswith("ATOM") or line.startswith("HETATM")) and current is not None:
+                name = line[12:16].strip()
+                x, y, z = float(line[30:38]), float(line[38:46]), float(line[46:54])
+                atype = line[76:78].strip() if len(line) >= 78 else name[0]
+                current.append((name, x, y, z, atype))
+    return poses
+
+
+def dock_ligand(receptor_pdbqt, ligand_pdbqt, center, size, out_poses_pdbqt, exhaustiveness=16, n_poses=N_POSES):
+    """Dock and return a list of (affinity, pose_atoms) tuples, best affinity first."""
     from vina import Vina
 
     v = Vina(sf_name="vina", verbosity=1)
     v.set_receptor(receptor_pdbqt)
     v.set_ligand_from_file(ligand_pdbqt)
     v.compute_vina_maps(center=list(center), box_size=list(size))
-    v.dock(exhaustiveness=exhaustiveness, n_poses=10)
-    v.write_poses(out_poses_pdbqt, n_poses=1, overwrite=True)
-    energies = v.energies(n_poses=1)
-    return float(energies[0][0])
+    v.dock(exhaustiveness=exhaustiveness, n_poses=n_poses)
+    v.write_poses(out_poses_pdbqt, n_poses=n_poses, overwrite=True)
+    affinities = [float(e[0]) for e in v.energies(n_poses=n_poses)]
+    poses = parse_poses(out_poses_pdbqt)
+    return list(zip(affinities, poses))
 
 
-def pdbqt_pose_to_pdb_lines(pdbqt_path, chain="A", resname="LIG", resnum=900):
-    """Extract the first MODEL's atoms from a Vina pose pdbqt as plain PDB ATOM/HETATM lines."""
+def pose_atoms_to_pdb_lines(pose_atoms, chain="A", resname="LIG", resnum=900):
     lines = []
     serial = 9000
-    with open(pdbqt_path) as f:
-        for line in f:
-            if line.startswith("ENDMDL"):
-                break
-            if line.startswith("ATOM") or line.startswith("HETATM"):
-                name = line[12:16]
-                x, y, z = line[30:38], line[38:46], line[46:54]
-                occ_temp = line[54:66] if len(line) >= 66 else "  1.00  0.00"
-                element = line[76:78] if len(line) >= 78 else f" {name.strip()[0]}"
-                serial += 1
-                pdb_line = (
-                    f"HETATM{serial:5d} {name:<4s}{resname:>3s} {chain}{resnum:4d}    "
-                    f"{x:>8s}{y:>8s}{z:>8s}{occ_temp}          {element.strip():>2s}\n"
-                )
-                lines.append(pdb_line)
+    for name, x, y, z, atype in pose_atoms:
+        serial += 1
+        lines.append(
+            f"HETATM{serial:5d} {name:<4s}{resname:>3s} {chain}{resnum:4d}    "
+            f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {atype[:2].strip():>2s}\n"
+        )
     return lines
 
 
@@ -216,7 +249,8 @@ def merge_receptor_and_ligand(receptor_pdb, ligand_lines, out_pdb):
         f.write("END\n")
 
 
-def find_ligand_contacts(receptor_pdb, ligand_lines, cutoff=4.5):
+def find_ligand_contacts(receptor_pdb, pose_atoms, cutoff=4.5):
+    """Receptor residue numbers within cutoff of any ligand atom in this pose."""
     protein_atoms = []
     with open(receptor_pdb) as f:
         for line in f:
@@ -224,18 +258,57 @@ def find_ligand_contacts(receptor_pdb, ligand_lines, cutoff=4.5):
                 resnum = int(line[22:26])
                 protein_atoms.append((resnum, float(line[30:38]), float(line[38:46]), float(line[46:54])))
 
-    lig_coords = []
-    for line in ligand_lines:
-        lig_coords.append((float(line[30:38]), float(line[38:46]), float(line[46:54])))
-
     contacts = set()
     for resnum, x, y, z in protein_atoms:
-        for lx, ly, lz in lig_coords:
-            d2 = (x - lx) ** 2 + (y - ly) ** 2 + (z - lz) ** 2
-            if d2 <= cutoff ** 2:
+        for _, lx, ly, lz, _ in pose_atoms:
+            if (x - lx) ** 2 + (y - ly) ** 2 + (z - lz) ** 2 <= cutoff ** 2:
                 contacts.add(resnum)
                 break
     return sorted(contacts)
+
+
+def contact_atom_indices(receptor_pdb, pose_atoms, cutoff=4.5):
+    """Ligand atom indices (into pose_atoms) within cutoff of any receptor atom."""
+    protein_coords = []
+    with open(receptor_pdb) as f:
+        for line in f:
+            if line.startswith("ATOM"):
+                protein_coords.append((float(line[30:38]), float(line[38:46]), float(line[46:54])))
+
+    contacts = set()
+    for i, (_, lx, ly, lz, _) in enumerate(pose_atoms):
+        for x, y, z in protein_coords:
+            if (x - lx) ** 2 + (y - ly) ** 2 + (z - lz) ** 2 <= cutoff ** 2:
+                contacts.add(i)
+                break
+    return contacts
+
+
+def best_compatible_pair(crbn_results, ppil4_results, crbn_receptor_pdb, ppil4_receptor_pdb,
+                          overlap_threshold=POSE_OVERLAP_THRESHOLD):
+    """Search all (CRBN pose, PPIL4 pose) combinations for the best-combined-affinity
+    pair whose ligand-contact atoms don't substantially overlap. Neither protein's
+    pose is privileged -- both pose sets are searched jointly. Falls back to the
+    best combined affinity overall (flagged as inconsistent) if no pair clears
+    the threshold, rather than dropping the candidate."""
+    crbn_contacts = [contact_atom_indices(crbn_receptor_pdb, pose) for _, pose in crbn_results]
+    ppil4_contacts = [contact_atom_indices(ppil4_receptor_pdb, pose) for _, pose in ppil4_results]
+
+    pairs = []
+    for i, (crbn_aff, _) in enumerate(crbn_results):
+        for j, (ppil4_aff, _) in enumerate(ppil4_results):
+            shared = crbn_contacts[i] & ppil4_contacts[j]
+            union = crbn_contacts[i] | ppil4_contacts[j]
+            overlap = len(shared) / len(union) if union else 0.0
+            pairs.append((overlap <= overlap_threshold, crbn_aff + ppil4_aff, i, j, crbn_aff, ppil4_aff, overlap))
+
+    consistent_pairs = [p for p in pairs if p[0]]
+    pool = consistent_pairs if consistent_pairs else pairs
+    _, combined, i, j, crbn_aff, ppil4_aff, overlap = min(pool, key=lambda p: p[1])
+    return {
+        "crbn_pose": i, "ppil4_pose": j, "crbn_affinity": crbn_aff, "ppil4_affinity": ppil4_aff,
+        "combined_affinity": combined, "overlap": overlap, "consistent": bool(consistent_pairs),
+    }
 
 
 def print_table(rows, columns, title=None):
@@ -310,36 +383,43 @@ def main():
         ligand_pdbqt = os.path.join(candidate_dir, f"{candidate_name}.pdbqt")
         smiles_to_ligand_pdbqt(candidate_smiles, ligand_pdbqt)
 
-        print("== Docking against CRBN with Vina ==")
+        print(f"== Docking against CRBN with Vina ({N_POSES} poses) ==")
         crbn_poses_pdbqt = os.path.join(candidate_dir, f"{candidate_name}_crbn_poses.pdbqt")
-        crbn_affinity = dock_ligand(crbn_receptor_pdbqt, ligand_pdbqt, crbn_center, crbn_size, crbn_poses_pdbqt)
-        print(f"CRBN affinity: {crbn_affinity:.2f} kcal/mol")
+        crbn_results = dock_ligand(crbn_receptor_pdbqt, ligand_pdbqt, crbn_center, crbn_size, crbn_poses_pdbqt)
 
-        print("== Docking against PPIL4 with Vina ==")
+        print(f"== Docking against PPIL4 with Vina ({N_POSES} poses) ==")
         ppil4_poses_pdbqt = os.path.join(candidate_dir, f"{candidate_name}_ppil4_poses.pdbqt")
-        ppil4_affinity = dock_ligand(ppil4_receptor_pdbqt, ligand_pdbqt, ppil4_center, ppil4_size, ppil4_poses_pdbqt)
-        print(f"PPIL4 affinity: {ppil4_affinity:.2f} kcal/mol")
+        ppil4_results = dock_ligand(ppil4_receptor_pdbqt, ligand_pdbqt, ppil4_center, ppil4_size, ppil4_poses_pdbqt)
 
-        print("== Extracting top CRBN pose and merging with CRBN receptor ==")
-        ligand_lines = pdbqt_pose_to_pdb_lines(crbn_poses_pdbqt)
+        print("== Selecting best geometrically-compatible CRBN/PPIL4 pose pair ==")
+        selection = best_compatible_pair(crbn_results, ppil4_results, CRBN_RECEPTOR_PDB, PPIL4_SOURCE_PDB)
+        status = "consistent" if selection["consistent"] else "CONFLICT -- no compatible pair found"
+        print(f"CRBN pose #{selection['crbn_pose']} ({selection['crbn_affinity']:.2f} kcal/mol), "
+              f"PPIL4 pose #{selection['ppil4_pose']} ({selection['ppil4_affinity']:.2f} kcal/mol), "
+              f"ligand-atom overlap {selection['overlap']:.0%} [{status}]")
+
+        crbn_pose_atoms = crbn_results[selection["crbn_pose"]][1]
+
+        print("== Writing selected CRBN pose and merging with CRBN receptor ==")
+        ligand_lines = pose_atoms_to_pdb_lines(crbn_pose_atoms)
         merged_pdb = os.path.join(candidate_dir, "CRBN_candidate_complex.pdb")
         merge_receptor_and_ligand(CRBN_RECEPTOR_PDB, ligand_lines, merged_pdb)
         print(f"Wrote {merged_pdb}")
 
         print("== Finding CRBN contact residues ==")
-        contacts = find_ligand_contacts(CRBN_RECEPTOR_PDB, ligand_lines)
+        contacts = find_ligand_contacts(CRBN_RECEPTOR_PDB, crbn_pose_atoms)
         print("CRBN active (candidate-contact) residues:", contacts)
 
         contacts_path = os.path.join(candidate_dir, "crbn_contacts.txt")
         with open(contacts_path, "w") as f:
             f.write(" ".join(str(r) for r in contacts) + "\n")
-            f.write(f"{crbn_affinity}\n")
+            f.write(f"{selection['crbn_affinity']}\n")
         print(f"Wrote {contacts_path}")
 
-        combined_affinity = crbn_affinity + ppil4_affinity
         results.append({
-            "name": candidate_name, "crbn_affinity": crbn_affinity,
-            "ppil4_affinity": ppil4_affinity, "combined_affinity": combined_affinity,
+            "name": candidate_name, "crbn_affinity": selection["crbn_affinity"],
+            "ppil4_affinity": selection["ppil4_affinity"], "combined_affinity": selection["combined_affinity"],
+            "overlap": selection["overlap"], "consistent": selection["consistent"],
             "n_contacts": len(contacts),
         })
 
@@ -350,14 +430,21 @@ def main():
          ("crbn (kcal/mol)", lambda r: f"{r['crbn_affinity']:.2f}"),
          ("ppil4 (kcal/mol)", lambda r: f"{r['ppil4_affinity']:.2f}"),
          ("combined", lambda r: f"{r['combined_affinity']:.2f}"),
+         ("overlap", lambda r: f"{r['overlap']:.0%}"),
+         ("consistent", lambda r: "yes" if r["consistent"] else "NO"),
          ("n_contacts", lambda r: str(r["n_contacts"]))],
         title="Vina screening results (best combined affinity first)",
     )
+    if any(not r["consistent"] for r in results):
+        flagged = [r["name"] for r in results if not r["consistent"]]
+        print(f"\nWARNING: no geometrically-compatible CRBN/PPIL4 pose pair found for: {', '.join(flagged)} "
+              "-- reported affinities use the best available (overlapping) pair.")
 
     with open(SCREENING_SUMMARY_TSV, "w") as f:
-        f.write("name\tcrbn_affinity\tppil4_affinity\tcombined_affinity\n")
+        f.write("name\tcrbn_affinity\tppil4_affinity\tcombined_affinity\toverlap\tconsistent\n")
         for r in results:
-            f.write(f"{r['name']}\t{r['crbn_affinity']}\t{r['ppil4_affinity']}\t{r['combined_affinity']}\n")
+            f.write(f"{r['name']}\t{r['crbn_affinity']}\t{r['ppil4_affinity']}\t{r['combined_affinity']}\t"
+                    f"{r['overlap']}\t{r['consistent']}\n")
     print(f"\nWrote {SCREENING_SUMMARY_TSV}")
 
 

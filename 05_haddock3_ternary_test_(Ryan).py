@@ -26,6 +26,8 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -161,6 +163,27 @@ def run(cmd, **kwargs):
     subprocess.run(cmd, check=True, **kwargs)
 
 
+def run_with_heartbeat(cmd, interval=20, **kwargs):
+    """Like run(), but prints a heartbeat line every `interval` seconds while
+    the subprocess is silent -- haddock3 goes quiet for tens of seconds to a
+    few minutes during CNS computation, which otherwise looks like it hung."""
+    print("+", " ".join(cmd))
+    start = time.time()
+    stop = threading.Event()
+
+    def heartbeat():
+        while not stop.wait(interval):
+            print(f"    ... still running ({int(time.time() - start)}s elapsed)")
+
+    thread = threading.Thread(target=heartbeat, daemon=True)
+    thread.start()
+    try:
+        subprocess.run(cmd, check=True, **kwargs)
+    finally:
+        stop.set()
+        thread.join()
+
+
 def print_capri_summary(haddock_run_dir):
     """Print the cluster stats from the last caprieval step of a finished run."""
     caprieval_dirs = sorted(
@@ -279,7 +302,7 @@ ambig_fname = "{ambig_tbl}"
     if os.path.exists(haddock_run_dir):
         print(f"Removing existing run_dir from a previous run: {haddock_run_dir}")
         shutil.rmtree(haddock_run_dir)
-    run(["haddock3", cfg_path])
+    run_with_heartbeat(["haddock3", cfg_path])
 
     print_capri_summary(haddock_run_dir)
     print("== Done. See:", haddock_run_dir)
