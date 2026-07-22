@@ -168,7 +168,31 @@ def print_table(rows, columns, title=None):
         print("  ".join(get(r, key).ljust(widths[label]) for label, key in columns))
 
 
+def check_environment():
+    """Fail fast with a clear message if run under the wrong interpreter.
+
+    This script needs the SYSTEM python (vina/meeko/rdkit installed there),
+    not the .venv-haddock3 venv used by 05/07 -- that venv is for the
+    haddock3 CLI only and doesn't have these packages.
+    """
+    missing = []
+    for module in ("vina", "meeko", "rdkit"):
+        try:
+            __import__(module)
+        except ImportError:
+            missing.append(module)
+    if missing:
+        sys.exit(
+            f"Missing packages: {', '.join(missing)}. You're running this with:\n"
+            f"  {sys.executable}\n"
+            "This script needs the SYSTEM python, not the .venv-haddock3 venv. Run:\n"
+            '  /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 '
+            '"06_dock_candidate_crbn_(Ryan).py"'
+        )
+
+
 def main():
+    check_environment()
     os.makedirs(OUT_DIR, exist_ok=True)
 
     print("== Computing docking box from reference thalidomide position ==")
