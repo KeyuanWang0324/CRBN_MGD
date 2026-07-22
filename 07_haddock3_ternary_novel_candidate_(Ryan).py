@@ -55,6 +55,10 @@ PPIL4_SOURCE_PDB = os.path.join(SCRIPT_DIR, "PPIL4_alphafold_(Ryan).pdb")
 RUN_DIR_BASE = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate_run")
 PPIL4_PDB = os.path.join(RUN_DIR_BASE, "PPIL4_chainB.pdb")
 
+# HADDOCK3's own `ncores` default is 4 regardless of machine size -- bump it
+# to (all cores - 1) so CNS jobs actually use the available hardware.
+NCORES = max(1, (os.cpu_count() or 4) - 1)
+
 
 def ppil4_pocket_residues():
     """Same CypA-homology active-site mapping used throughout this project."""
@@ -206,6 +210,7 @@ def dock_one_candidate(candidate_name, crbn_affinity, ppil4_affinity, combined_a
     cfg_path = os.path.join(candidate_run_dir, "haddock3_novel_candidate.toml")
     cfg = f"""
 run_dir = "{haddock_run_dir}"
+ncores = {NCORES}
 
 molecules = [
     "{CRBN_RECEPTOR_ONLY_PDB}",

@@ -58,6 +58,10 @@ PPIL4_SOURCE_PDB = os.path.join(SCRIPT_DIR, "PPIL4_alphafold_(Ryan).pdb")
 RUN_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_thalidomide_test")
 PPIL4_PDB = os.path.join(RUN_DIR, "PPIL4_chainB.pdb")
 
+# HADDOCK3's own `ncores` default is 4 regardless of machine size -- bump it
+# to (all cores - 1) so CNS jobs actually use the available hardware.
+NCORES = max(1, (os.cpu_count() or 4) - 1)
+
 CONTACT_CUTOFF = 4.5  # Angstrom, CRBN residue counted "active" if within this of thalidomide
 
 
@@ -272,6 +276,7 @@ def main():
     cfg_path = os.path.join(RUN_DIR, "haddock3_thalidomide_test.toml")
     cfg = f"""
 run_dir = "{haddock_run_dir}"
+ncores = {NCORES}
 
 molecules = [
     "{CRBN_RECEPTOR_PDB}",
