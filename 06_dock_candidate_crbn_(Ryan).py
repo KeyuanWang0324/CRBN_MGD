@@ -24,6 +24,26 @@ import subprocess
 import sys
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+
+
+def _has_required_packages():
+    try:
+        import vina, meeko, rdkit  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+# This script needs vina/meeko/rdkit, which live in the SYSTEM python, not
+# the .venv-haddock3 venv used by 05/07. If they're missing -- e.g. the
+# wrong venv is active, or the IDE's Run button used a different interpreter
+# -- relaunch under the system python automatically instead of failing deep
+# inside prepare_receptor(). The sys.executable check guards against looping
+# if the system python itself is ever missing these packages.
+if not _has_required_packages() and sys.executable != SYSTEM_PYTHON:
+    os.execv(SYSTEM_PYTHON, [SYSTEM_PYTHON] + sys.argv)
+
 REFERENCE_PDB = os.path.join(SCRIPT_DIR, "CRBN-Thalidomide-SALL4_(Ryan).pdb")
 CRBN_RECEPTOR_PDB = os.path.join(SCRIPT_DIR, "CRBN_receptor_thalidomide_Ryan.pdb")
 OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")

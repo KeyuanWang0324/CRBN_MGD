@@ -25,11 +25,26 @@ import glob
 import os
 import shutil
 import subprocess
+import sys
+
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# This script needs the haddock3/pdb-tools CLIs (haddock3, haddock3-restraints,
+# pdb_chain), which live in .venv-haddock3/bin. If that's not on PATH --
+# e.g. the venv wasn't activated, or the IDE's Run button used a different
+# interpreter -- relaunch under it automatically instead of failing deep
+# inside a subprocess call.
+if shutil.which("haddock3") is None:
+    haddock_venv_bin = os.path.join(SCRIPT_DIR, ".venv-haddock3", "bin")
+    haddock_python = os.path.join(haddock_venv_bin, "python3")
+    env = os.environ.copy()
+    env["PATH"] = haddock_venv_bin + os.pathsep + env.get("PATH", "")
+    env["VIRTUAL_ENV"] = os.path.join(SCRIPT_DIR, ".venv-haddock3")
+    os.execve(haddock_python, [haddock_python] + sys.argv, env)
 
 from Bio import Align
 from Bio.Align import substitution_matrices
 
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 REFERENCE_PDB = os.path.join(SCRIPT_DIR, "CRBN-Thalidomide-SALL4_(Ryan).pdb")
 # NOTE: CNS's "@@" file-include syntax treats parentheses as special
 # characters and truncates the path at "(" -- so any PDB/PSF path that CNS
