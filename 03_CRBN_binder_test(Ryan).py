@@ -28,6 +28,7 @@ import contextlib
 import math
 import os
 import sys
+import time
 import warnings
 
 import numpy as np
@@ -142,6 +143,7 @@ def fetch_all_activities(target_chembl_id, batch_size=1000):
         all_records.extend(activities)
 
         total = data["page_meta"]["total_count"]
+        print(f"  ... fetched {len(all_records)}/{total} activity records")
         offset += batch_size
         if offset >= total:
             break
@@ -246,7 +248,10 @@ if __name__ == "__main__":
     skipped_no_label = 0
     skipped_bad_smiles = 0
 
-    for record in records:
+    for i, record in enumerate(records, 1):
+        if i % 200 == 0:
+            print(f"  ... processed {i}/{len(records)} records")
+
         smiles = record.get("canonical_smiles")
         if not smiles:
             skipped_no_smiles += 1
@@ -366,7 +371,10 @@ if __name__ == "__main__":
         n_jobs=-1,
         class_weight="balanced"
     )
+    print(f"Training RandomForest ({N_ESTIMATORS} trees) ...")
+    fit_start = time.time()
     crbn_binder_clf.fit(X_train, y_train)
+    print(f"  ... done in {time.time() - fit_start:.1f}s")
 
     # --- Step 3: evaluate final model on untouched 20% test set ---
     test_pred = crbn_binder_clf.predict(X_test)
@@ -471,6 +479,7 @@ def fetch_all_activities(target_chembl_id, batch_size=1000):
         all_records.extend(activities)
 
         total = data["page_meta"]["total_count"]
+        print(f"  ... fetched {len(all_records)}/{total} activity records")
         offset += batch_size
         if offset >= total:
             break
@@ -544,7 +553,9 @@ def build_dataset():
         print(f"  {len(records)} raw activity records")
 
         kept = 0
-        for record in records:
+        for i, record in enumerate(records, 1):
+            if i % 200 == 0:
+                print(f"  ... processed {i}/{len(records)} records")
             smiles = record.get("canonical_smiles")
             if not smiles:
                 continue
@@ -712,7 +723,10 @@ if __name__ == "__main__":
     crbn_glue_clf = RandomForestClassifier(
         n_estimators=N_ESTIMATORS, random_state=RANDOM_STATE, n_jobs=-1, class_weight="balanced"
     )
+    print(f"Training RandomForest ({N_ESTIMATORS} trees) ...")
+    fit_start = time.time()
     crbn_glue_clf.fit(X_train, y_train)
+    print(f"  ... done in {time.time() - fit_start:.1f}s")
 
     test_pred = crbn_glue_clf.predict(X_test)
     test_proba = crbn_glue_clf.predict_proba(X_test)[:, 1]
@@ -988,7 +1002,12 @@ def score_candidates(candidates, crbn_glue_clf, tmp_dir):
     """
     os.makedirs(tmp_dir, exist_ok=True)
     results = []
-    for name, smiles in candidates:
+    start = time.time()
+    for i, (name, smiles) in enumerate(candidates, 1):
+        elapsed = time.time() - start
+        eta = (elapsed / (i - 1)) * (len(candidates) - i + 1) if i > 1 else 0
+        print(f"[{i}/{len(candidates)}] Docking {name} ... "
+              f"({elapsed:.0f}s elapsed, ~{eta:.0f}s remaining)")
         row = {"name": name, "smiles": smiles}
 
         fp = smiles_to_fingerprint(smiles)
@@ -1112,7 +1131,10 @@ if __name__ == "__main__":
     X = np.load(os.path.join(SCRIPT_DIR, "X_crbn_glue_fingerprints_(Ryan).npy"))
     Y = np.load(os.path.join(SCRIPT_DIR, "Y_crbn_glue_labels_(Ryan).npy"))
     crbn_glue_clf = RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1, class_weight="balanced")
+    print("Training RandomForest (200 trees) ...")
+    fit_start = time.time()
     crbn_glue_clf.fit(X, Y)
+    print(f"  ... done in {time.time() - fit_start:.1f}s")
 
     # Priority: --sanity-check > --smiles-file > candidates.csv (if present) >
     # interactive prompt as a last resort.

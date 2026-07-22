@@ -60,6 +60,53 @@ PPIL4_PDB = os.path.join(RUN_DIR_BASE, "PPIL4_chainB.pdb")
 # to (all cores - 1) so CNS jobs actually use the available hardware.
 NCORES = max(1, (os.cpu_count() or 4) - 1)
 
+# (step index, module name, per-model count if it writes one *_N.pdb[.gz]
+# file per model else None, rough share of total wall-clock time) -- mirrors
+# the [modules] laid out in dock_one_candidate()'s cfg below. flexref
+# dominates despite fewer models than rigidbody because each one does real
+# refinement work, not just a cheap rigid-body minimization. Only used to
+# turn "which step is running" into one rough live percentage, not a
+# precise timing model. See 08_haddock3_ternary_complete_(Ryan).py for the
+# fuller writeup of this approach.
+STEP_PLAN = [
+    (0, "topoaa", None, 0.02),
+    (1, "rigidbody", 20, 0.25),
+    (2, "caprieval", None, 0.08),
+    (3, "seletop", None, 0.02),
+    (4, "flexref", 10, 0.55),
+    (5, "caprieval", None, 0.08),
+]
+
+
+def estimate_progress(run_dir, step_plan):
+    """Best-effort (overall fraction, (step, name, count, expected)) from
+    what's on disk so far."""
+    completed_weight = 0.0
+    current = None
+    for idx, name, expected, weight in step_plan:
+        step_dir = os.path.join(run_dir, f"{idx}_{name}")
+        if not os.path.isdir(step_dir):
+            break
+
+        next_dir = (os.path.join(run_dir, f"{idx + 1}_{step_plan[idx + 1][1]}")
+                    if idx + 1 < len(step_plan) else None)
+        if next_dir and os.path.isdir(next_dir):
+            completed_weight += weight
+            continue
+
+        if expected:
+            count = len({os.path.basename(p).split(".")[0]
+                         for p in glob.glob(os.path.join(step_dir, f"{name}_*.pdb*"))})
+            frac = min(count / expected, 1.0)
+            current = (idx, name, count, expected)
+        else:
+            frac = 0.5
+            current = (idx, name, None, None)
+        completed_weight += weight * frac
+        break
+
+    return completed_weight, current
+
 
 def ppil4_pocket_residues():
     """Same CypA-homology active-site mapping used throughout this project."""
@@ -108,17 +155,30 @@ def run(cmd, **kwargs):
     subprocess.run(cmd, check=True, **kwargs)
 
 
-def run_with_heartbeat(cmd, interval=20, **kwargs):
-    """Like run(), but prints a heartbeat line every `interval` seconds while
-    the subprocess is silent -- haddock3 goes quiet for tens of seconds to a
-    few minutes during CNS computation, which otherwise looks like it hung."""
+def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, **kwargs):
+    """Like run(), but prints a live progress line every `interval` seconds
+    while the subprocess is silent -- haddock3 goes quiet for tens of seconds
+    to a few minutes during CNS computation, which otherwise looks like it
+    hung. If run_dir/step_plan are given, reports step name and % complete
+    (see estimate_progress); otherwise just prints elapsed time."""
     print("+", " ".join(cmd))
     start = time.time()
     stop = threading.Event()
 
     def heartbeat():
         while not stop.wait(interval):
-            print(f"    ... still running ({int(time.time() - start)}s elapsed)")
+            elapsed = int(time.time() - start)
+            if not (run_dir and step_plan):
+                print(f"    ... still running ({elapsed}s elapsed)", flush=True)
+                continue
+            pct, current = estimate_progress(run_dir, step_plan)
+            if current is None:
+                print(f"    ... {elapsed}s elapsed, starting up (no step directory yet)", flush=True)
+            else:
+                idx, name, count, expected = current
+                detail = f"{count}/{expected} models" if expected else "running"
+                print(f"    ... {elapsed}s elapsed | step {idx + 1}/{len(step_plan)} "
+                      f"({name}): {detail} | overall ~{pct * 100:.0f}%", flush=True)
 
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
@@ -242,7 +302,7 @@ ambig_fname = "{ambig_tbl}"
     if os.path.exists(haddock_run_dir):
         print(f"Removing existing run_dir from a previous run: {haddock_run_dir}")
         shutil.rmtree(haddock_run_dir)
-    run_with_heartbeat(["haddock3", cfg_path])
+    run_with_heartbeat(["haddock3", cfg_path], run_dir=haddock_run_dir, step_plan=STEP_PLAN)
 
     print_capri_summary(haddock_run_dir)
 
@@ -307,10 +367,14 @@ def main():
     write_actpass_file(ppil4_active, ppil4_passive, ppil4_actpass)
 
     results = []
-    for candidate in selected:
-        print(f"\n== Candidate: {candidate['name']} "
+    loop_start = time.time()
+    for i, candidate in enumerate(selected, 1):
+        elapsed = time.time() - loop_start
+        eta = (elapsed / (i - 1)) * (len(selected) - i + 1) if i > 1 else 0
+        print(f"\n== [{i}/{len(selected)}] Candidate: {candidate['name']} "
               f"(Vina: CRBN {candidate['crbn_affinity']:.2f}, PPIL4 {candidate['ppil4_affinity']:.2f}, "
-              f"combined {candidate['combined_affinity']:.2f} kcal/mol) ==")
+              f"combined {candidate['combined_affinity']:.2f} kcal/mol) -- "
+              f"{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining ==")
         candidate_vina_dir = os.path.join(VINA_OUT_DIR, candidate["name"])
         with open(os.path.join(candidate_vina_dir, "crbn_contacts.txt")) as f:
             crbn_active = [int(x) for x in f.readline().split()]

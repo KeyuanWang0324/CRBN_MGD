@@ -19,6 +19,7 @@ Run with the SYSTEM python (has requests/rdkit/sklearn installed):
 import os
 import random
 import sys
+import time
 from collections import defaultdict
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -87,6 +88,7 @@ def fetch_all_activities(target_chembl_id, batch_size=1000):
         all_records.extend(activities)
 
         total = data["page_meta"]["total_count"]
+        print(f"  ... fetched {len(all_records)}/{total} activity records")
         offset += batch_size
         if offset >= total:
             break
@@ -181,7 +183,10 @@ def train_and_evaluate(X_train, X_test, y_train, y_test, label):
     clf = RandomForestClassifier(
         n_estimators=N_ESTIMATORS, random_state=RANDOM_STATE, n_jobs=-1, class_weight="balanced",
     )
+    print(f"Training RandomForest ({N_ESTIMATORS} trees, {label}) ...")
+    fit_start = time.time()
     clf.fit(X_train, y_train)
+    print(f"  ... done in {time.time() - fit_start:.1f}s")
 
     y_pred = clf.predict(X_test)
     y_proba = clf.predict_proba(X_test)[:, 1]
@@ -208,19 +213,22 @@ def score_candidates_file(clf, candidates_csv, out_csv):
 
     rows = []
     with open(candidates_csv) as f:
-        for i, line in enumerate(f):
-            smiles = line.strip()
-            if not smiles:
-                continue
-            fp = smiles_to_fingerprint(smiles)
-            if fp is None:
-                rows.append({"name": f"cand_{i}", "smiles": smiles, "p_crbn_binder": "", "predicted_active": ""})
-                continue
-            proba = float(clf.predict_proba(fp.reshape(1, -1))[:, 1][0])
-            rows.append({
-                "name": f"cand_{i}", "smiles": smiles,
-                "p_crbn_binder": proba, "predicted_active": int(proba >= 0.5),
-            })
+        lines = f.readlines()
+    for i, line in enumerate(lines):
+        if i % 100 == 0:
+            print(f"  ... scored {i}/{len(lines)} candidates")
+        smiles = line.strip()
+        if not smiles:
+            continue
+        fp = smiles_to_fingerprint(smiles)
+        if fp is None:
+            rows.append({"name": f"cand_{i}", "smiles": smiles, "p_crbn_binder": "", "predicted_active": ""})
+            continue
+        proba = float(clf.predict_proba(fp.reshape(1, -1))[:, 1][0])
+        rows.append({
+            "name": f"cand_{i}", "smiles": smiles,
+            "p_crbn_binder": proba, "predicted_active": int(proba >= 0.5),
+        })
 
     with open(out_csv, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["name", "smiles", "p_crbn_binder", "predicted_active"])
@@ -300,7 +308,9 @@ def main():
     print(f"Inactive: {len(labels) - sum(labels)}")
 
     X_rows, y_rows, kept_smiles = [], [], []
-    for smiles, label in zip(smiles_list, labels):
+    for i, (smiles, label) in enumerate(zip(smiles_list, labels), 1):
+        if i % 200 == 0:
+            print(f"  ... fingerprinted {i}/{len(smiles_list)} compounds")
         fp = smiles_to_fingerprint(smiles)
         if fp is None:
             continue
@@ -348,7 +358,10 @@ def main():
         final_clf = RandomForestClassifier(
             n_estimators=N_ESTIMATORS, random_state=RANDOM_STATE, n_jobs=-1, class_weight="balanced",
         )
+        print(f"Training RandomForest ({N_ESTIMATORS} trees, final) ...")
+        fit_start = time.time()
         final_clf.fit(X, Y)
+        print(f"  ... done in {time.time() - fit_start:.1f}s")
         rows = score_candidates_file(final_clf, CANDIDATES_CSV, CANDIDATE_SCORES_CSV)
         n_active = sum(1 for r in rows if r["predicted_active"] == 1)
         print(f"Predicted active (P(binder) >= 0.5): {n_active}/{len(rows)}")

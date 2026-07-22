@@ -46,6 +46,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
@@ -237,7 +238,7 @@ def dock_ligand(receptor_pdbqt, ligand_pdbqt, center, size, out_poses_pdbqt, exh
     """Dock and return a list of (affinity, pose_atoms) tuples, best affinity first."""
     from vina import Vina
 
-    v = Vina(sf_name="vina", verbosity=1)
+    v = Vina(sf_name="vina", verbosity=0)
     v.set_receptor(receptor_pdbqt)
     v.set_ligand_from_file(ligand_pdbqt)
     v.compute_vina_maps(center=list(center), box_size=list(size))
@@ -396,8 +397,12 @@ def main():
     ppil4_receptor_pdbqt = ppil4_receptor_base + ".pdbqt"
 
     results = []
-    for candidate_name, candidate_smiles in CANDIDATES:
-        print(f"\n== Candidate: {candidate_name} ==")
+    loop_start = time.time()
+    for i, (candidate_name, candidate_smiles) in enumerate(CANDIDATES, 1):
+        elapsed = time.time() - loop_start
+        eta = (elapsed / (i - 1)) * (len(CANDIDATES) - i + 1) if i > 1 else 0
+        print(f"\n== [{i}/{len(CANDIDATES)}] Candidate: {candidate_name} "
+              f"({elapsed:.0f}s elapsed, ~{eta:.0f}s remaining) ==")
         candidate_dir = os.path.join(OUT_DIR, candidate_name)
         os.makedirs(candidate_dir, exist_ok=True)
 

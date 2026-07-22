@@ -14,6 +14,7 @@ import csv
 import os
 import random
 import sys
+import time
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
@@ -98,6 +99,7 @@ def main():
     analogs = []
     attempts = 0
     max_attempts = N_ANALOGS * 200
+    start = time.time()
 
     while len(analogs) < N_ANALOGS and attempts < max_attempts:
         attempts += 1
@@ -113,6 +115,9 @@ def main():
             continue
         seen.add(smiles)
         analogs.append(smiles)
+        if len(analogs) % 50 == 0:
+            print(f"  ... {len(analogs)}/{N_ANALOGS} analogs generated "
+                  f"({attempts} attempts, {time.time() - start:.0f}s elapsed)")
 
     if len(analogs) < N_ANALOGS:
         print(f"WARNING: only found {len(analogs)}/{N_ANALOGS} unique valid analogs "
