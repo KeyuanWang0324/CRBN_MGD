@@ -41,6 +41,7 @@ candidates by combined (CRBN + PPIL4) predicted affinity. 07 then runs the
 slow full ternary HADDOCK3 docking on only the top-ranked candidates --
 see TOP_N there.
 """
+import csv
 import math
 import os
 import subprocess
@@ -74,7 +75,7 @@ REFERENCE_PDB = os.path.join(SCRIPT_DIR, "CRBN-Thalidomide-SALL4_(Ryan).pdb")
 CRBN_RECEPTOR_PDB = os.path.join(SCRIPT_DIR, "CRBN_receptor_thalidomide_Ryan.pdb")
 PPIL4_SOURCE_PDB = os.path.join(SCRIPT_DIR, "PPIL4_alphafold_(Ryan).pdb")
 OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
-SCREENING_SUMMARY_TSV = os.path.join(OUT_DIR, "screening_summary.tsv")
+SCREENING_SUMMARY_CSV = os.path.join(OUT_DIR, "screening_summary.csv")
 
 # Vina poses considered per protein when picking a mutually-compatible
 # CRBN/PPIL4 pair, and the max fraction of shared ligand-contact atoms
@@ -319,14 +320,16 @@ def best_compatible_pair(crbn_results, ppil4_results, crbn_receptor_pdb, ppil4_r
             shared = crbn_contacts[i] & ppil4_contacts[j]
             union = crbn_contacts[i] | ppil4_contacts[j]
             overlap = len(shared) / len(union) if union else 0.0
-            pairs.append((overlap <= overlap_threshold, crbn_aff + ppil4_aff, i, j, crbn_aff, ppil4_aff, overlap))
+            pairs.append((overlap <= overlap_threshold, crbn_aff + ppil4_aff, i, j, crbn_aff, ppil4_aff, overlap, shared))
 
     consistent_pairs = [p for p in pairs if p[0]]
     pool = consistent_pairs if consistent_pairs else pairs
-    _, combined, i, j, crbn_aff, ppil4_aff, overlap = min(pool, key=lambda p: p[1])
+    _, combined, i, j, crbn_aff, ppil4_aff, overlap, shared = min(pool, key=lambda p: p[1])
+    shared_atom_names = [crbn_results[i][1][idx][0] for idx in sorted(shared)]
     return {
         "crbn_pose": i, "ppil4_pose": j, "crbn_affinity": crbn_aff, "ppil4_affinity": ppil4_aff,
         "combined_affinity": combined, "overlap": overlap, "consistent": bool(consistent_pairs),
+        "overlap_atoms": shared_atom_names,
     }
 
 
@@ -439,6 +442,7 @@ def main():
             "name": candidate_name, "crbn_affinity": selection["crbn_affinity"],
             "ppil4_affinity": selection["ppil4_affinity"], "combined_affinity": selection["combined_affinity"],
             "overlap": selection["overlap"], "consistent": selection["consistent"],
+            "overlap_atoms": selection["overlap_atoms"],
             "n_contacts": len(contacts),
         })
 
@@ -451,7 +455,8 @@ def main():
          ("combined", lambda r: f"{r['combined_affinity']:.2f}"),
          ("overlap", lambda r: f"{r['overlap']:.0%}"),
          ("consistent", lambda r: "yes" if r["consistent"] else "NO"),
-         ("n_contacts", lambda r: str(r["n_contacts"]))],
+         ("n_contacts", lambda r: str(r["n_contacts"])),
+         ("overlap_atoms", lambda r: ",".join(r["overlap_atoms"]) if r["overlap_atoms"] else "-")],
         title="Vina screening results (best combined affinity first)",
     )
     if any(not r["consistent"] for r in results):
@@ -459,12 +464,14 @@ def main():
         print(f"\nWARNING: no geometrically-compatible CRBN/PPIL4 pose pair found for: {', '.join(flagged)} "
               "-- reported affinities use the best available (overlapping) pair.")
 
-    with open(SCREENING_SUMMARY_TSV, "w") as f:
-        f.write("name\tcrbn_affinity\tppil4_affinity\tcombined_affinity\toverlap\tconsistent\n")
+    with open(SCREENING_SUMMARY_CSV, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "crbn_affinity", "ppil4_affinity", "combined_affinity",
+                          "overlap", "consistent", "n_contacts", "overlap_atoms"])
         for r in results:
-            f.write(f"{r['name']}\t{r['crbn_affinity']}\t{r['ppil4_affinity']}\t{r['combined_affinity']}\t"
-                    f"{r['overlap']}\t{r['consistent']}\n")
-    print(f"\nWrote {SCREENING_SUMMARY_TSV}")
+            writer.writerow([r["name"], r["crbn_affinity"], r["ppil4_affinity"], r["combined_affinity"],
+                              r["overlap"], r["consistent"], r["n_contacts"], ",".join(r["overlap_atoms"])])
+    print(f"\nWrote {SCREENING_SUMMARY_CSV}")
 
 
 if __name__ == "__main__":

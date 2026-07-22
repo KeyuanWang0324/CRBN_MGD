@@ -15,6 +15,7 @@ Run in the haddock3 venv:
     source .venv-haddock3/bin/activate
     python3 "07_haddock3_ternary_novel_candidate_(Ryan).py"
 """
+import csv
 import glob
 import os
 import shutil
@@ -42,7 +43,7 @@ from Bio import Align
 from Bio.Align import substitution_matrices
 
 VINA_OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
-SCREENING_SUMMARY_TSV = os.path.join(VINA_OUT_DIR, "screening_summary.tsv")
+SCREENING_SUMMARY_CSV = os.path.join(VINA_OUT_DIR, "screening_summary.csv")
 
 # Only the top TOP_N Vina-screened candidates get the full (~3+ min each)
 # HADDOCK3 ternary treatment; raise/lower as needed.
@@ -264,14 +265,13 @@ def main():
     os.makedirs(RUN_DIR_BASE, exist_ok=True)
 
     print("== Reading Vina screening results from 06 ==")
-    with open(SCREENING_SUMMARY_TSV) as f:
-        f.readline()  # header
-        screened = [line.strip().split("\t") for line in f if line.strip()]
-    screened = [
-        {"name": name, "crbn_affinity": float(crbn), "ppil4_affinity": float(ppil4),
-         "combined_affinity": float(combined), "overlap": float(overlap), "consistent": consistent == "True"}
-        for name, crbn, ppil4, combined, overlap, consistent in screened
-    ]
+    with open(SCREENING_SUMMARY_CSV, newline="") as f:
+        screened = [
+            {"name": row["name"], "crbn_affinity": float(row["crbn_affinity"]),
+             "ppil4_affinity": float(row["ppil4_affinity"]), "combined_affinity": float(row["combined_affinity"]),
+             "overlap": float(row["overlap"]), "consistent": row["consistent"] == "True"}
+            for row in csv.DictReader(f)
+        ]
     screened.sort(key=lambda r: r["combined_affinity"])
 
     selected = screened[:TOP_N]
