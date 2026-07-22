@@ -43,11 +43,13 @@ from Bio import Align
 from Bio.Align import substitution_matrices
 
 VINA_OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
-SCREENING_SUMMARY_CSV = os.path.join(VINA_OUT_DIR, "screening_summary.csv")
+# Root-level copy written by 06 (see SCREENING_SUMMARY_CSV_ROOT there), not
+# the docking_tmp working copy -- same contents, just the human-visible one.
+SCREENING_SUMMARY_CSV = os.path.join(SCRIPT_DIR, "screening_scores_(Ryan).csv")
 
 # Only the top TOP_N Vina-screened candidates get the full (~3+ min each)
 # HADDOCK3 ternary treatment; raise/lower as needed.
-TOP_N = 5
+TOP_N = 20
 
 # CNS's "@@" include syntax truncates paths at "(" -- keep this filename
 # parenthesis-free since it's fed directly to HADDOCK3 as a molecule.

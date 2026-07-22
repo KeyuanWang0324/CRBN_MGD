@@ -7,8 +7,9 @@ Run with the SYSTEM python (has rdkit installed):
     /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
         "01_generate_thalidomide_analogs_(Ryan).py"
 
-Writes candidates.csv (id, substituents, smiles) and prints how many
-valid, unique analog SMILES were generated.
+Writes 01_generated_analogs_(Ryan).csv (id, substituents, smiles) -- the raw
+analog pool scored by 03 and 04 downstream -- and prints how many valid,
+unique analog SMILES were generated.
 """
 import csv
 import os
@@ -41,7 +42,7 @@ RDLogger.DisableLog("rdApp.*")  # silence RDKit SMILES parsing warnings
 
 THALIDOMIDE_SMILES = "O=C1CCC(N2C(=O)c3ccccc3C2=O)C(=O)N1"
 N_ANALOGS = 500
-OUTPUT_CSV = os.path.join(SCRIPT_DIR, "candidates.csv")
+OUTPUT_CSV = os.path.join(SCRIPT_DIR, "01_generated_analogs_(Ryan).csv")
 RANDOM_SEED = 42
 
 # Substituent fragments, each attached via a single bond in place of one

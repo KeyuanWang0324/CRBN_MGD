@@ -1082,8 +1082,8 @@ def print_results_table(results):
     print("=" * len(header) + "\n")
 
 
-DEFAULT_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "candidates.csv")
-RESULTS_CSV = os.path.join(SCRIPT_DIR, "mgd_scores_(Ryan).csv")
+DEFAULT_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "01_generated_analogs_(Ryan).csv")
+RESULTS_CSV = os.path.join(SCRIPT_DIR, "03_mgd_scores_for_04_(Ryan).csv")
 
 
 def read_candidates_file(path):
@@ -1116,7 +1116,7 @@ def write_results_csv(results, path):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--smiles-file", help="File of SMILES (optionally 'SMILES,Name' per line); "
-                                               f"defaults to candidates.csv if present in {SCRIPT_DIR}")
+                                               f"defaults to 01_generated_analogs_(Ryan).csv if present in {SCRIPT_DIR}")
     parser.add_argument("--sanity-check", action="store_true",
                          help="Score known CRBN glues (thalidomide/lenalidomide/pomalidomide) instead of prompting")
     parser.add_argument("--rebuild-receptor", action="store_true",
@@ -1136,7 +1136,7 @@ if __name__ == "__main__":
     crbn_glue_clf.fit(X, Y)
     print(f"  ... done in {time.time() - fit_start:.1f}s")
 
-    # Priority: --sanity-check > --smiles-file > candidates.csv (if present) >
+    # Priority: --sanity-check > --smiles-file > 01_generated_analogs_(Ryan).csv (if present) >
     # interactive prompt as a last resort.
     if args.sanity_check:
         candidates = SANITY_CHECK_CANDIDATES

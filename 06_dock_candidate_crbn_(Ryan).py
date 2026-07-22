@@ -77,6 +77,11 @@ CRBN_RECEPTOR_PDB = os.path.join(SCRIPT_DIR, "CRBN_receptor_thalidomide_Ryan.pdb
 PPIL4_SOURCE_PDB = os.path.join(SCRIPT_DIR, "PPIL4_alphafold_(Ryan).pdb")
 OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
 SCREENING_SUMMARY_CSV = os.path.join(OUT_DIR, "screening_summary.csv")
+# Root-level copy, alongside the project's other *_(Ryan).csv outputs
+# (03_mgd_scores_for_04_(Ryan).csv, 04_crbn_binder_scores_(Ryan).csv, ...) --
+# the docking_tmp copy above stays put too, next to the raw per-candidate
+# poses/contacts it's derived from.
+SCREENING_SUMMARY_CSV_ROOT = os.path.join(SCRIPT_DIR, "screening_scores_(Ryan).csv")
 
 # Vina poses considered per protein when picking a mutually-compatible
 # CRBN/PPIL4 pair, and the max fraction of shared ligand-contact atoms
@@ -94,7 +99,13 @@ _FALLBACK_CANDIDATES = [
 # Top-ranked subset from 01's 500 thalidomide analogs, filtered by 03+04's
 # combined rank-aggregated scoring -- see build_active_candidates() in
 # 04_crbn_binder_scaffold_model_(Ryan).py for how this file gets built.
-ACTIVE_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "active_candidates_(Ryan).csv")
+ACTIVE_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "04_active_candidates_for_06_(Ryan).csv")
+
+# Cap how many of 04_active_candidates_for_06_(Ryan).csv's rows get docked, since each
+# one costs two Vina dockings (CRBN + PPIL4). The file is already sorted by
+# combined_rank (best first, see build_active_candidates() in 04), so this
+# keeps the top N. Set to None to run all of them.
+MAX_CANDIDATES = 50
 
 
 def load_candidates():
@@ -103,6 +114,9 @@ def load_candidates():
         with open(ACTIVE_CANDIDATES_CSV) as f:
             candidates = [(row["name"], row["smiles"]) for row in csv.DictReader(f)]
         print(f"Loaded {len(candidates)} candidates from {ACTIVE_CANDIDATES_CSV}")
+        if MAX_CANDIDATES is not None and len(candidates) > MAX_CANDIDATES:
+            candidates = candidates[:MAX_CANDIDATES]
+            print(f"Capped to top {MAX_CANDIDATES} by combined_rank (MAX_CANDIDATES)")
         return candidates
     print(f"{ACTIVE_CANDIDATES_CSV} not found -- using the single fallback candidate. "
           "Run 01, then 03 and 04, to generate a real screened candidate list.")
@@ -469,14 +483,15 @@ def main():
         print(f"\nWARNING: no geometrically-compatible CRBN/PPIL4 pose pair found for: {', '.join(flagged)} "
               "-- reported affinities use the best available (overlapping) pair.")
 
-    with open(SCREENING_SUMMARY_CSV, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["name", "crbn_affinity", "ppil4_affinity", "combined_affinity",
-                          "overlap", "consistent", "n_contacts", "overlap_atoms"])
-        for r in results:
-            writer.writerow([r["name"], r["crbn_affinity"], r["ppil4_affinity"], r["combined_affinity"],
-                              r["overlap"], r["consistent"], r["n_contacts"], ",".join(r["overlap_atoms"])])
-    print(f"\nWrote {SCREENING_SUMMARY_CSV}")
+    for out_path in (SCREENING_SUMMARY_CSV, SCREENING_SUMMARY_CSV_ROOT):
+        with open(out_path, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["name", "crbn_affinity", "ppil4_affinity", "combined_affinity",
+                              "overlap", "consistent", "n_contacts", "overlap_atoms"])
+            for r in results:
+                writer.writerow([r["name"], r["crbn_affinity"], r["ppil4_affinity"], r["combined_affinity"],
+                                  r["overlap"], r["consistent"], r["n_contacts"], ",".join(r["overlap_atoms"])])
+        print(f"Wrote {out_path}")
 
 
 if __name__ == "__main__":

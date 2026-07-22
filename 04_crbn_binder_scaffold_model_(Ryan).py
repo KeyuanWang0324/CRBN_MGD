@@ -59,10 +59,10 @@ RANDOM_STATE = 42
 TEST_SIZE = 0.20
 N_ESTIMATORS = 200
 
-CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "candidates.csv")
-CANDIDATE_SCORES_CSV = os.path.join(SCRIPT_DIR, "crbn_binder_scores_(Ryan).csv")
-MGD_SCORES_CSV = os.path.join(SCRIPT_DIR, "mgd_scores_(Ryan).csv")  # written by 03's Step 4
-ACTIVE_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "active_candidates_(Ryan).csv")  # consumed by 06
+CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "01_generated_analogs_(Ryan).csv")
+CANDIDATE_SCORES_CSV = os.path.join(SCRIPT_DIR, "04_crbn_binder_scores_(Ryan).csv")
+MGD_SCORES_CSV = os.path.join(SCRIPT_DIR, "03_mgd_scores_for_04_(Ryan).csv")  # written by 03's Step 4
+ACTIVE_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "04_active_candidates_for_06_(Ryan).csv")  # consumed by 06
 ACTIVE_FRACTION = 0.20
 
 
@@ -349,7 +349,7 @@ def main():
           "model generalizes to genuinely new chemotypes -- a gap between the two rows "
           "means the random split was leaking easy near-duplicate compounds into the test set.")
 
-    # --- Score candidates.csv, if present, with a final classifier refit on
+    # --- Score 01_generated_analogs_(Ryan).csv, if present, with a final classifier refit on
     # --- ALL labeled data (the random/scaffold splits above are only for
     # --- honest metric reporting, not for the model actually used to score
     # --- new candidates).
