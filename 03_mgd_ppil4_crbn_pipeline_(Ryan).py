@@ -32,6 +32,26 @@ import warnings
 
 import numpy as np
 
+SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
+
+
+def _has_required_packages():
+    try:
+        import requests, matplotlib, sklearn, rdkit  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+# This script needs requests/matplotlib, which are missing from the
+# .venv-haddock3 venv used by 05/07. If they're missing -- e.g. the wrong
+# venv is active, or the IDE's Run button used a different interpreter --
+# relaunch under the system python automatically instead of failing deep
+# inside an import. The sys.executable check guards against looping if the
+# system python itself is ever missing these packages.
+if not _has_required_packages() and sys.executable != SYSTEM_PYTHON:
+    os.execv(SYSTEM_PYTHON, [SYSTEM_PYTHON] + sys.argv)
+
 
 # =============================================================================
 # Step 1: CRBN Bioactivity Pipeline + Baseline RF Classifier (original)
