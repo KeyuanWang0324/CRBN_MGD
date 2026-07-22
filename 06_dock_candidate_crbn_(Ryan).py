@@ -53,8 +53,14 @@ def thalidomide_box(reference_pdb, padding=14, min_size=20):
 
 
 def prepare_receptor(pdb_path, out_base, center, size):
+    # Invoke via `-m` (module path) rather than relying on the
+    # mk_prepare_receptor.py console script being on PATH -- meeko installs
+    # that script under ~/Library/Python/3.12/bin, which isn't always on
+    # PATH depending on how this script gets launched (IDE run button vs.
+    # a shell that's sourced ~/.zprofile).
     subprocess.run(
-        ["mk_prepare_receptor.py", "--read_pdb", pdb_path, "-o", out_base, "-p", "-v",
+        [sys.executable, "-m", "meeko.cli.mk_prepare_receptor",
+         "--read_pdb", pdb_path, "-o", out_base, "-p", "-v",
          "--box_center", str(center[0]), str(center[1]), str(center[2]),
          "--box_size", str(size[0]), str(size[1]), str(size[2])],
         check=True,
