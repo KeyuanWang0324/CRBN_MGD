@@ -149,7 +149,7 @@ def print_capri_summary(haddock_run_dir):
     print_table(rows, CAPRI_COLUMNS, title=f"Final CAPRI cluster results ({os.path.basename(final_dir)})")
 
 
-def dock_one_candidate(candidate_name, vina_affinity, crbn_active, ppil4_actpass):
+def dock_one_candidate(candidate_name, crbn_affinity, ppil4_affinity, combined_affinity, crbn_active, ppil4_actpass):
     candidate_run_dir = os.path.join(RUN_DIR_BASE, candidate_name)
     os.makedirs(candidate_run_dir, exist_ok=True)
 
@@ -221,7 +221,9 @@ ambig_fname = "{ambig_tbl}"
     top_row = rows[0] if rows else None
     return {
         "name": candidate_name,
-        "vina_affinity": vina_affinity,
+        "crbn_affinity": crbn_affinity,
+        "ppil4_affinity": ppil4_affinity,
+        "combined_affinity": combined_affinity,
         "score": top_row["score"] if top_row else "-",
         "dockq": top_row["dockq"] if top_row else "-",
         "irmsd": top_row["irmsd"] if top_row else "-",
@@ -237,8 +239,11 @@ def main():
     with open(SCREENING_SUMMARY_TSV) as f:
         f.readline()  # header
         screened = [line.strip().split("\t") for line in f if line.strip()]
-    screened = [{"name": name, "affinity": float(affinity)} for name, affinity in screened]
-    screened.sort(key=lambda r: r["affinity"])
+    screened = [
+        {"name": name, "crbn_affinity": float(crbn), "ppil4_affinity": float(ppil4), "combined_affinity": float(combined)}
+        for name, crbn, ppil4, combined in screened
+    ]
+    screened.sort(key=lambda r: r["combined_affinity"])
 
     selected = screened[:TOP_N]
     skipped = screened[TOP_N:]
@@ -269,21 +274,26 @@ def main():
 
     results = []
     for candidate in selected:
-        print(f"\n== Candidate: {candidate['name']} (Vina affinity {candidate['affinity']:.2f} kcal/mol) ==")
+        print(f"\n== Candidate: {candidate['name']} "
+              f"(Vina: CRBN {candidate['crbn_affinity']:.2f}, PPIL4 {candidate['ppil4_affinity']:.2f}, "
+              f"combined {candidate['combined_affinity']:.2f} kcal/mol) ==")
         candidate_vina_dir = os.path.join(VINA_OUT_DIR, candidate["name"])
         with open(os.path.join(candidate_vina_dir, "crbn_contacts.txt")) as f:
             crbn_active = [int(x) for x in f.readline().split()]
         print("CRBN active (candidate-contact) residues:", crbn_active)
 
         result = dock_one_candidate(
-            candidate["name"], candidate["affinity"], crbn_active, ppil4_actpass,
+            candidate["name"], candidate["crbn_affinity"], candidate["ppil4_affinity"],
+            candidate["combined_affinity"], crbn_active, ppil4_actpass,
         )
         results.append(result)
 
     results.sort(key=lambda r: (r["dockq"] == "-", -float(r["dockq"]) if r["dockq"] != "-" else 0))
     print_table(
         results,
-        [("name", "name"), ("vina (kcal/mol)", lambda r: f"{r['vina_affinity']:.2f}"),
+        [("name", "name"),
+         ("crbn (kcal/mol)", lambda r: f"{r['crbn_affinity']:.2f}"),
+         ("ppil4 (kcal/mol)", lambda r: f"{r['ppil4_affinity']:.2f}"),
          ("score", "score"), ("dockq", "dockq"), ("irmsd", "irmsd"),
          ("fnat", "fnat"), ("lrmsd", "lrmsd")],
         title="Candidate comparison (best dockq first)",
