@@ -7,13 +7,14 @@ run a cheap, truncated HADDOCK3 config (rigidbody sampling=20, flexref on the
 top 10, no emref, no clustering) to rank many candidates quickly. This script
 runs the COMPLETE stock HADDOCK3 protein-protein routine instead -- rigidbody
 sampling=1000, flexref + emref refinement on the top 200, then clustfcc
-clustering -- on the top TOP_N candidates (best dockq) from 07's comparison
+clustering -- on dockq ranks RANK_START-RANK_END from 07's comparison
 table, one after another. Set CANDIDATE_NAME to run a single specific
 candidate instead.
 
 This is far more expensive than 06/07 (rough estimate: 45 min - 1.5 hr per
 candidate on an 18-core machine, vs. ~3 min for 07's lite pass) -- keep
-TOP_N small (a handful of finalists), not a full screen.
+the RANK_START-RANK_END range small (a handful of candidates at a time),
+not a full screen in one go.
 
 Run in the haddock3 venv:
     source .venv-haddock3/bin/activate
@@ -59,16 +60,19 @@ TERNARY_SCORES_CSV = os.path.join(SCRIPT_DIR, "07_ternary_docking_scores_for_08_
 RESULTS_CSV = os.path.join(SCRIPT_DIR, "08_final_ternary_results_(Ryan).csv")
 
 # Set this to a specific candidate's name from 07's comparison table to run
-# only that one (bypasses TOP_N entirely). Leave blank to auto-pick the top
-# TOP_N candidates by dockq from TERNARY_SCORES_CSV instead (falling back to
-# 06's best combined_affinity if 07 hasn't been run yet).
+# only that one (bypasses RANK_START/RANK_END entirely). Leave blank to
+# auto-pick a range of candidates by dockq rank from TERNARY_SCORES_CSV
+# instead (falling back to 06's best combined_affinity if 07 hasn't been
+# run yet).
 CANDIDATE_NAME = ""
 
-# How many of 07's top-ranked (by dockq) candidates to run the complete
-# routine on, when CANDIDATE_NAME is left blank. Each candidate costs
-# ~45 min - 1.5 hr, so raise/lower with total run time in mind. Default of
-# 20 covers every candidate in 07's output (07's own TOP_N).
-TOP_N = 20
+# 1-indexed, inclusive range of 07's dockq-ranked candidates to run the
+# complete routine on, when CANDIDATE_NAME is left blank -- e.g. 6/20 runs
+# the 6th-through-20th-best candidates (skipping the top 5 already run
+# elsewhere). Each candidate costs ~45 min - 1.5 hr, so size the range with
+# total run time in mind.
+RANK_START = 6
+RANK_END = 20
 
 # CNS's "@@" include syntax truncates paths at "(" -- keep this filename
 # parenthesis-free since it's fed directly to HADDOCK3 as a molecule.
@@ -294,9 +298,9 @@ def pick_candidate_names():
             rows = [r for r in csv.DictReader(f) if r["dockq"] != "-"]
         if rows:
             rows.sort(key=lambda r: float(r["dockq"]), reverse=True)
-            names = [r["name"] for r in rows[:TOP_N]]
-            print(f"CANDIDATE_NAME not set -- auto-selecting top {len(names)} by dockq from "
-                  f"{TERNARY_SCORES_CSV}: {', '.join(names)}")
+            names = [r["name"] for r in rows[RANK_START - 1:RANK_END]]
+            print(f"CANDIDATE_NAME not set -- auto-selecting dockq ranks {RANK_START}-{RANK_END} "
+                  f"({len(names)} candidate(s)) from {TERNARY_SCORES_CSV}: {', '.join(names)}")
             return names
         print(f"{TERNARY_SCORES_CSV} has no usable dockq rows -- falling back to 06's screening scores.")
 
@@ -308,10 +312,10 @@ def pick_candidate_names():
     if not rows:
         sys.exit(f"No rows in {VINA_SCREENING_CSV} -- run 06 first, or set CANDIDATE_NAME directly.")
     rows.sort(key=lambda r: float(r["combined_affinity"]))
-    names = [r["name"] for r in rows[:TOP_N]]
-    print(f"CANDIDATE_NAME not set -- auto-selecting top {len(names)} by combined_affinity from "
-          "06's screening scores -- run 07 for a dockq-based pick instead. "
-          "Set CANDIDATE_NAME explicitly to run a single specific candidate.")
+    names = [r["name"] for r in rows[RANK_START - 1:RANK_END]]
+    print(f"CANDIDATE_NAME not set -- auto-selecting combined_affinity ranks {RANK_START}-{RANK_END} "
+          f"({len(names)} candidate(s)) from 06's screening scores -- run 07 for a dockq-based pick "
+          "instead. Set CANDIDATE_NAME explicitly to run a single specific candidate.")
     return names
 
 
