@@ -265,7 +265,7 @@ def dock_ligand(receptor_pdbqt, ligand_pdbqt, center, size, out_poses_pdbqt, exh
     return list(zip(affinities, poses))
 
 
-def pose_atoms_to_pdb_lines(pose_atoms, chain="A", resname="LIG", resnum=900):
+def pose_atoms_to_pdb_lines(pose_atoms, chain="C", resname="LIG", resnum=900):
     """PDB column spec: atom name cols 13-16, altLoc col 17, resName cols
     18-20, chainID col 22, resSeq cols 23-26. The altLoc column (a blank)
     must be written explicitly between name and resname, or every field
