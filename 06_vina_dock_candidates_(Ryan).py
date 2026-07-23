@@ -266,12 +266,17 @@ def dock_ligand(receptor_pdbqt, ligand_pdbqt, center, size, out_poses_pdbqt, exh
 
 
 def pose_atoms_to_pdb_lines(pose_atoms, chain="A", resname="LIG", resnum=900):
+    """PDB column spec: atom name cols 13-16, altLoc col 17, resName cols
+    18-20, chainID col 22, resSeq cols 23-26. The altLoc column (a blank)
+    must be written explicitly between name and resname, or every field
+    after it (resName/chain/resSeq) lands one column early -- which a
+    strict column-based reader (e.g. PyMOL) will misparse."""
     lines = []
     serial = 9000
     for name, x, y, z, atype in pose_atoms:
         serial += 1
         lines.append(
-            f"HETATM{serial:5d} {name:<4s}{resname:>3s} {chain}{resnum:4d}    "
+            f"HETATM{serial:5d} {name:<4s} {resname:>3s} {chain}{resnum:4d}    "
             f"{x:8.3f}{y:8.3f}{z:8.3f}  1.00  0.00          {atype[:2].strip():>2s}\n"
         )
     return lines
