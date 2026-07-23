@@ -213,6 +213,19 @@ def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, label=Non
         thread.join()
 
 
+def write_results_csv(results):
+    """Write the current (possibly partial) results list to RESULTS_CSV.
+    Called after every candidate, not just at the end, so a later
+    candidate's failure can't lose earlier candidates' results."""
+    with open(RESULTS_CSV, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "crbn_affinity", "ppil4_affinity", "combined_affinity",
+                          "score", "dockq", "irmsd", "fnat", "lrmsd"])
+        for r in results:
+            writer.writerow([r["name"], r["crbn_affinity"], r["ppil4_affinity"], r["combined_affinity"],
+                              r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
+
+
 def print_table(rows, columns, title=None):
     if not rows:
         print("(no rows)")
@@ -380,11 +393,20 @@ def main():
         with open(os.path.join(candidate_vina_dir, "crbn_contacts.txt")) as f:
             crbn_active = [int(x) for x in f.readline().split()]
 
-        result = dock_one_candidate(
-            candidate["name"], candidate["crbn_affinity"], candidate["ppil4_affinity"],
-            candidate["combined_affinity"], crbn_active, ppil4_actpass, label=label,
-        )
+        try:
+            result = dock_one_candidate(
+                candidate["name"], candidate["crbn_affinity"], candidate["ppil4_affinity"],
+                candidate["combined_affinity"], crbn_active, ppil4_actpass, label=label,
+            )
+        except subprocess.CalledProcessError:
+            print(f"[{label}] HADDOCK3 failed for this candidate -- skipping it and continuing with the rest.")
+            result = {
+                "name": candidate["name"], "crbn_affinity": candidate["crbn_affinity"],
+                "ppil4_affinity": candidate["ppil4_affinity"], "combined_affinity": candidate["combined_affinity"],
+                "score": "-", "dockq": "-", "irmsd": "-", "fnat": "-", "lrmsd": "-",
+            }
         results.append(result)
+        write_results_csv(results)  # write after every candidate so a later failure can't lose earlier results
 
     results.sort(key=lambda r: (r["dockq"] == "-", -float(r["dockq"]) if r["dockq"] != "-" else 0))
     print_table(
@@ -397,13 +419,7 @@ def main():
         title="Candidate comparison (best dockq first)",
     )
 
-    with open(RESULTS_CSV, "w", newline="") as f:
-        writer = csv.writer(f)
-        writer.writerow(["name", "crbn_affinity", "ppil4_affinity", "combined_affinity",
-                          "score", "dockq", "irmsd", "fnat", "lrmsd"])
-        for r in results:
-            writer.writerow([r["name"], r["crbn_affinity"], r["ppil4_affinity"], r["combined_affinity"],
-                              r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
+    write_results_csv(results)
     print(f"Wrote {RESULTS_CSV}")
 
     total = time.time() - SCRIPT_START_TIME
