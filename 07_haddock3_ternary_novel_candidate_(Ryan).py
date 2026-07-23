@@ -2,7 +2,7 @@
 HADDOCK3 ternary-complex docking for novel CRBN-glue candidates vs PPIL4.
 
 Follow-on to 05_haddock3_ternary_test_(Ryan).py (the Thalidomide reference-
-structure test case) and 06_dock_candidate_crbn_(Ryan).py (which Vina-screens
+structure test case) and 06_vina_dock_candidates_(Ryan).py (which Vina-screens
 candidates into CRBN's pocket and ranks them by affinity, since -- unlike
 Thalidomide -- no crystal structure exists for them). This script reads that
 screening ranking, derives CRBN-side AIR restraints from each top candidate's
@@ -45,7 +45,10 @@ from Bio.Align import substitution_matrices
 VINA_OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
 # Root-level copy written by 06 (see SCREENING_SUMMARY_CSV_ROOT there), not
 # the docking_tmp working copy -- same contents, just the human-visible one.
-SCREENING_SUMMARY_CSV = os.path.join(SCRIPT_DIR, "screening_scores_(Ryan).csv")
+SCREENING_SUMMARY_CSV = os.path.join(SCRIPT_DIR, "06_vina_screening_scores_for_07_(Ryan).csv")
+# This script's own ranked output -- pick the finalist (best dockq) from
+# here and set it as 08's CANDIDATE_NAME.
+RESULTS_CSV = os.path.join(SCRIPT_DIR, "07_ternary_docking_scores_for_08_(Ryan).csv")
 
 # Only the top TOP_N Vina-screened candidates get the full (~3+ min each)
 # HADDOCK3 ternary treatment; raise/lower as needed.
@@ -157,13 +160,15 @@ def run(cmd, **kwargs):
     subprocess.run(cmd, check=True, **kwargs)
 
 
-def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, **kwargs):
+def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, label=None, **kwargs):
     """Like run(), but prints a live progress line every `interval` seconds
     while the subprocess is silent -- haddock3 goes quiet for tens of seconds
     to a few minutes during CNS computation, which otherwise looks like it
     hung. If run_dir/step_plan are given, reports step name and % complete
-    (see estimate_progress); otherwise just prints elapsed time."""
-    print("+", " ".join(cmd))
+    (see estimate_progress); otherwise just prints elapsed time. `label`
+    (e.g. "cand_42, 3/20, 17 left") is prefixed on each line so it's clear
+    which candidate a given update belongs to."""
+    prefix = f"[{label}] " if label else ""
     start = time.time()
     stop = threading.Event()
 
@@ -171,16 +176,16 @@ def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, **kwargs)
         while not stop.wait(interval):
             elapsed = int(time.time() - start)
             if not (run_dir and step_plan):
-                print(f"    ... still running ({elapsed}s elapsed)", flush=True)
+                print(f"    ... {prefix}still running ({elapsed}s elapsed)", flush=True)
                 continue
             pct, current = estimate_progress(run_dir, step_plan)
             if current is None:
-                print(f"    ... {elapsed}s elapsed, starting up (no step directory yet)", flush=True)
+                print(f"    ... {prefix}{elapsed}s elapsed, starting up", flush=True)
             else:
                 idx, name, count, expected = current
                 detail = f"{count}/{expected} models" if expected else "running"
-                print(f"    ... {elapsed}s elapsed | step {idx + 1}/{len(step_plan)} "
-                      f"({name}): {detail} | overall ~{pct * 100:.0f}%", flush=True)
+                print(f"    ... {prefix}step {idx + 1}/{len(step_plan)} ({name}): "
+                      f"{detail} | overall ~{pct * 100:.0f}%", flush=True)
 
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
@@ -224,26 +229,11 @@ def read_final_capri_rows(haddock_run_dir):
     return final_dir, rows
 
 
-CAPRI_COLUMNS = [
-    ("rank", "caprieval_rank"), ("cluster", "cluster_id"), ("n", "n"),
-    ("score", "score"), ("dockq", "dockq"),
-    ("irmsd", "irmsd"), ("fnat", "fnat"), ("lrmsd", "lrmsd"),
-]
-
-
-def print_capri_summary(haddock_run_dir):
-    final_dir, rows = read_final_capri_rows(haddock_run_dir)
-    if rows is None:
-        print("No caprieval output found.")
-        return
-    print_table(rows, CAPRI_COLUMNS, title=f"Final CAPRI cluster results ({os.path.basename(final_dir)})")
-
-
-def dock_one_candidate(candidate_name, crbn_affinity, ppil4_affinity, combined_affinity, crbn_active, ppil4_actpass):
+def dock_one_candidate(candidate_name, crbn_affinity, ppil4_affinity, combined_affinity, crbn_active, ppil4_actpass,
+                        label=None):
     candidate_run_dir = os.path.join(RUN_DIR_BASE, candidate_name)
     os.makedirs(candidate_run_dir, exist_ok=True)
 
-    print("== Deriving CRBN passive residues via haddock3-restraints ==")
     crbn_active_csv = ",".join(str(r) for r in crbn_active)
     # Use the receptor-only PDB (no ligand atoms) for passive_from_active --
     # the docked candidate isn't part of the CNS topology (see the
@@ -253,12 +243,10 @@ def dock_one_candidate(candidate_name, crbn_affinity, ppil4_affinity, combined_a
         check=True, capture_output=True, text=True,
     ).stdout.strip()
     crbn_passive = [int(x) for x in crbn_passive_out.split()] if crbn_passive_out else []
-    print("CRBN passive residues:", crbn_passive)
 
     crbn_actpass = os.path.join(candidate_run_dir, "crbn_actpass.txt")
     write_actpass_file(crbn_active, crbn_passive, crbn_actpass)
 
-    print("== Generating ambig.tbl ==")
     ambig_tbl = os.path.join(candidate_run_dir, "ambig.tbl")
     with open(ambig_tbl, "w") as out:
         subprocess.run(
@@ -266,9 +254,7 @@ def dock_one_candidate(candidate_name, crbn_affinity, ppil4_affinity, combined_a
              "--segid-one", "A", "--segid-two", "B"],
             check=True, stdout=out,
         )
-    print(f"Wrote {ambig_tbl}")
 
-    print("== Writing HADDOCK3 config ==")
     haddock_run_dir = os.path.join(candidate_run_dir, "run1")
     cfg_path = os.path.join(candidate_run_dir, "haddock3_novel_candidate.toml")
     cfg = f"""
@@ -298,15 +284,10 @@ ambig_fname = "{ambig_tbl}"
 """
     with open(cfg_path, "w") as f:
         f.write(cfg.strip() + "\n")
-    print(f"Wrote {cfg_path}")
 
-    print("== Running HADDOCK3 (this will take a while) ==")
     if os.path.exists(haddock_run_dir):
-        print(f"Removing existing run_dir from a previous run: {haddock_run_dir}")
         shutil.rmtree(haddock_run_dir)
-    run_with_heartbeat(["haddock3", cfg_path], run_dir=haddock_run_dir, step_plan=STEP_PLAN)
-
-    print_capri_summary(haddock_run_dir)
+    run_with_heartbeat(["haddock3", cfg_path], run_dir=haddock_run_dir, step_plan=STEP_PLAN, label=label)
 
     _, rows = read_final_capri_rows(haddock_run_dir)
     top_row = rows[0] if rows else None
@@ -369,22 +350,17 @@ def main():
     write_actpass_file(ppil4_active, ppil4_passive, ppil4_actpass)
 
     results = []
-    loop_start = time.time()
     for i, candidate in enumerate(selected, 1):
-        elapsed = time.time() - loop_start
-        eta = (elapsed / (i - 1)) * (len(selected) - i + 1) if i > 1 else 0
-        print(f"\n== [{i}/{len(selected)}] Candidate: {candidate['name']} "
-              f"(Vina: CRBN {candidate['crbn_affinity']:.2f}, PPIL4 {candidate['ppil4_affinity']:.2f}, "
-              f"combined {candidate['combined_affinity']:.2f} kcal/mol) -- "
-              f"{elapsed:.0f}s elapsed, ~{eta:.0f}s remaining ==")
+        remaining = len(selected) - i
+        label = f"{candidate['name']}, {i}/{len(selected)}, {remaining} left"
+        print(f"\n[{label}]")
         candidate_vina_dir = os.path.join(VINA_OUT_DIR, candidate["name"])
         with open(os.path.join(candidate_vina_dir, "crbn_contacts.txt")) as f:
             crbn_active = [int(x) for x in f.readline().split()]
-        print("CRBN active (candidate-contact) residues:", crbn_active)
 
         result = dock_one_candidate(
             candidate["name"], candidate["crbn_affinity"], candidate["ppil4_affinity"],
-            candidate["combined_affinity"], crbn_active, ppil4_actpass,
+            candidate["combined_affinity"], crbn_active, ppil4_actpass, label=label,
         )
         results.append(result)
 
@@ -398,6 +374,15 @@ def main():
          ("fnat", "fnat"), ("lrmsd", "lrmsd")],
         title="Candidate comparison (best dockq first)",
     )
+
+    with open(RESULTS_CSV, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "crbn_affinity", "ppil4_affinity", "combined_affinity",
+                          "score", "dockq", "irmsd", "fnat", "lrmsd"])
+        for r in results:
+            writer.writerow([r["name"], r["crbn_affinity"], r["ppil4_affinity"], r["combined_affinity"],
+                              r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
+    print(f"Wrote {RESULTS_CSV}")
 
 
 if __name__ == "__main__":

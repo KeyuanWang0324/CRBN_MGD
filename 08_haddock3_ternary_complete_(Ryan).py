@@ -2,7 +2,7 @@
 COMPLETE HADDOCK3 ternary-docking routine (full sampling + emref + clustfcc)
 for a single CRBN-glue candidate vs PPIL4.
 
-06_dock_candidate_crbn_(Ryan).py and 07_haddock3_ternary_novel_candidate_(Ryan).py
+06_vina_dock_candidates_(Ryan).py and 07_haddock3_ternary_novel_candidate_(Ryan).py
 run a cheap, truncated HADDOCK3 config (rigidbody sampling=20, flexref on the
 top 10, no emref, no clustering) to rank many candidates quickly. This script
 runs the COMPLETE stock HADDOCK3 protein-protein routine instead -- rigidbody
@@ -46,11 +46,20 @@ from Bio import Align
 from Bio.Align import substitution_matrices
 
 VINA_OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
-SCREENING_SUMMARY_CSV = os.path.join(VINA_OUT_DIR, "screening_summary.csv")
+# Used only for the crbn_contacts.txt each candidate's restraints are built
+# from -- not for auto-picking a candidate, see pick_candidate_name() below.
+VINA_SCREENING_CSV = os.path.join(SCRIPT_DIR, "06_vina_screening_scores_for_07_(Ryan).csv")
+# 07's ranked output (best dockq first) -- the primary source for auto-
+# picking a finalist when CANDIDATE_NAME is left blank.
+TERNARY_SCORES_CSV = os.path.join(SCRIPT_DIR, "07_ternary_docking_scores_for_08_(Ryan).csv")
+# This script's own output -- the finalist's final CAPRI cluster results.
+# Terminal file (nothing downstream reads it), so no "_for_XX" suffix.
+RESULTS_CSV = os.path.join(SCRIPT_DIR, "08_final_ternary_results_(Ryan).csv")
 
 # Set this to the winning candidate's name from 07's final comparison table
-# (best dockq). Leave blank to auto-pick the best combined_affinity candidate
-# from 06's screening summary instead.
+# (best dockq). Leave blank to auto-pick the best-dockq candidate from
+# TERNARY_SCORES_CSV instead (falling back to 06's best combined_affinity
+# if 07 hasn't been run yet).
 CANDIDATE_NAME = ""
 
 # CNS's "@@" include syntax truncates paths at "(" -- keep this filename
@@ -168,14 +177,15 @@ def run(cmd, **kwargs):
     subprocess.run(cmd, check=True, **kwargs)
 
 
-def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, **kwargs):
+def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, label=None, **kwargs):
     """Like run(), but prints a live progress line every `interval` seconds
     while the subprocess is silent -- the complete routine's rigidbody/
     flexref/emref stages each churn through hundreds of models and can go
     quiet for a long time, which otherwise looks like it hung. If run_dir/
     step_plan are given, reports step name and % complete (see
-    estimate_progress); otherwise just prints elapsed time."""
-    print("+", " ".join(cmd))
+    estimate_progress); otherwise just prints elapsed time. `label` (e.g. a
+    candidate name) is prefixed on each line."""
+    prefix = f"[{label}] " if label else ""
     start = time.time()
     stop = threading.Event()
 
@@ -183,16 +193,16 @@ def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, **kwargs)
         while not stop.wait(interval):
             elapsed = int(time.time() - start)
             if not (run_dir and step_plan):
-                print(f"    ... still running ({elapsed}s elapsed)", flush=True)
+                print(f"    ... {prefix}still running ({elapsed}s elapsed)", flush=True)
                 continue
             pct, current = estimate_progress(run_dir, step_plan)
             if current is None:
-                print(f"    ... {elapsed}s elapsed, starting up (no step directory yet)", flush=True)
+                print(f"    ... {prefix}{elapsed}s elapsed, starting up", flush=True)
             else:
                 idx, name, count, expected = current
                 detail = f"{count}/{expected} models" if expected else "running"
-                print(f"    ... {elapsed}s elapsed | step {idx + 1}/{len(step_plan)} "
-                      f"({name}): {detail} | overall ~{pct * 100:.0f}%", flush=True)
+                print(f"    ... {prefix}step {idx + 1}/{len(step_plan)} ({name}): "
+                      f"{detail} | overall ~{pct * 100:.0f}%", flush=True)
 
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
@@ -254,37 +264,36 @@ def print_capri_summary(haddock_run_dir):
 def pick_candidate_name():
     if CANDIDATE_NAME:
         return CANDIDATE_NAME
-    with open(SCREENING_SUMMARY_CSV, newline="") as f:
+
+    if os.path.exists(TERNARY_SCORES_CSV):
+        with open(TERNARY_SCORES_CSV, newline="") as f:
+            rows = [r for r in csv.DictReader(f) if r["dockq"] != "-"]
+        if rows:
+            best = max(rows, key=lambda r: float(r["dockq"]))
+            print(f"CANDIDATE_NAME not set -- auto-selecting '{best['name']}' (best dockq "
+                  f"{float(best['dockq']):.3f}) from {TERNARY_SCORES_CSV}.")
+            return best["name"]
+        print(f"{TERNARY_SCORES_CSV} has no usable dockq rows -- falling back to 06's screening scores.")
+
+    if not os.path.exists(VINA_SCREENING_CSV):
+        sys.exit(f"Neither {TERNARY_SCORES_CSV} nor {VINA_SCREENING_CSV} found -- "
+                  "run 06 (then 07) first, or set CANDIDATE_NAME directly.")
+    with open(VINA_SCREENING_CSV, newline="") as f:
         rows = list(csv.DictReader(f))
     if not rows:
-        sys.exit(f"No rows in {SCREENING_SUMMARY_CSV} -- run 06 first, or set CANDIDATE_NAME directly.")
+        sys.exit(f"No rows in {VINA_SCREENING_CSV} -- run 06 first, or set CANDIDATE_NAME directly.")
     best = min(rows, key=lambda r: float(r["combined_affinity"]))
     print(f"CANDIDATE_NAME not set -- auto-selecting '{best['name']}' (best combined_affinity "
-          f"{float(best['combined_affinity']):.2f} kcal/mol) from 06's screening summary. "
-          "Set CANDIDATE_NAME explicitly to run a different candidate, e.g. 07's best-dockq winner.")
+          f"{float(best['combined_affinity']):.2f} kcal/mol) from 06's screening scores "
+          "-- run 07 for a dockq-based pick instead. "
+          "Set CANDIDATE_NAME explicitly to run a different candidate.")
     return best["name"]
-
-
-def load_vina_affinities(candidate_name):
-    if not os.path.exists(SCREENING_SUMMARY_CSV):
-        return None
-    with open(SCREENING_SUMMARY_CSV, newline="") as f:
-        for row in csv.DictReader(f):
-            if row["name"] == candidate_name:
-                return row
-    return None
 
 
 def main():
     os.makedirs(RUN_DIR_BASE, exist_ok=True)
     candidate_name = pick_candidate_name()
-    print(f"== Running COMPLETE HADDOCK3 routine for candidate: {candidate_name} ==")
-
-    vina_row = load_vina_affinities(candidate_name)
-    if vina_row:
-        print(f"06's Vina screening: CRBN {float(vina_row['crbn_affinity']):.2f}, "
-              f"PPIL4 {float(vina_row['ppil4_affinity']):.2f}, "
-              f"combined {float(vina_row['combined_affinity']):.2f} kcal/mol")
+    print(f"[{candidate_name}] step 0/{len(STEP_PLAN)}: preparing restraints/config")
 
     candidate_vina_dir = os.path.join(VINA_OUT_DIR, candidate_name)
     contacts_path = os.path.join(candidate_vina_dir, "crbn_contacts.txt")
@@ -292,17 +301,12 @@ def main():
         sys.exit(f"{contacts_path} not found -- run 06 for this candidate first.")
     with open(contacts_path) as f:
         crbn_active = [int(x) for x in f.readline().split()]
-    print("CRBN active (candidate-contact) residues:", crbn_active)
 
-    print("== Renaming PPIL4 chain A -> B (HADDOCK3 requires unique chain/segids per partner) ==")
     with open(PPIL4_PDB, "w") as out:
         run(["pdb_chain", "-B", PPIL4_SOURCE_PDB], stdout=out)
 
-    print("== Computing PPIL4 pocket residues (CypA-homology mapping) ==")
     ppil4_active = ppil4_pocket_residues()
-    print("PPIL4 active (pocket) residues:", ppil4_active)
 
-    print("== Deriving passive residues via haddock3-restraints ==")
     crbn_active_csv = ",".join(str(r) for r in crbn_active)
     # Use the receptor-only PDB (no ligand atoms) for passive_from_active --
     # the docked candidate isn't part of the CNS topology (see the
@@ -312,7 +316,6 @@ def main():
         check=True, capture_output=True, text=True,
     ).stdout.strip()
     crbn_passive = [int(x) for x in crbn_passive_out.split()] if crbn_passive_out else []
-    print("CRBN passive residues:", crbn_passive)
 
     ppil4_active_csv = ",".join(str(r) for r in ppil4_active)
     ppil4_passive_out = subprocess.run(
@@ -320,7 +323,6 @@ def main():
         check=True, capture_output=True, text=True,
     ).stdout.strip()
     ppil4_passive = [int(x) for x in ppil4_passive_out.split()] if ppil4_passive_out else []
-    print("PPIL4 passive residues:", ppil4_passive)
 
     candidate_run_dir = os.path.join(RUN_DIR_BASE, candidate_name)
     os.makedirs(candidate_run_dir, exist_ok=True)
@@ -330,7 +332,6 @@ def main():
     ppil4_actpass = os.path.join(candidate_run_dir, "ppil4_actpass.txt")
     write_actpass_file(ppil4_active, ppil4_passive, ppil4_actpass)
 
-    print("== Generating ambig.tbl ==")
     ambig_tbl = os.path.join(candidate_run_dir, "ambig.tbl")
     with open(ambig_tbl, "w") as out:
         subprocess.run(
@@ -338,9 +339,7 @@ def main():
              "--segid-one", "A", "--segid-two", "B"],
             check=True, stdout=out,
         )
-    print(f"Wrote {ambig_tbl}")
 
-    print("== Writing HADDOCK3 config (complete routine: full sampling + emref + clustfcc) ==")
     haddock_run_dir = os.path.join(candidate_run_dir, "run1")
     cfg_path = os.path.join(candidate_run_dir, "haddock3_complete.toml")
     cfg = f"""
@@ -379,15 +378,23 @@ ambig_fname = "{ambig_tbl}"
 """
     with open(cfg_path, "w") as f:
         f.write(cfg.strip() + "\n")
-    print(f"Wrote {cfg_path}")
 
-    print("== Running complete HADDOCK3 routine (rough estimate: 45 min - 1.5 hr) ==")
     if os.path.exists(haddock_run_dir):
-        print(f"Removing existing run_dir from a previous run: {haddock_run_dir}")
         shutil.rmtree(haddock_run_dir)
-    run_with_heartbeat(["haddock3", cfg_path], run_dir=haddock_run_dir, step_plan=STEP_PLAN)
+    print(f"[{candidate_name}] starting HADDOCK3 (rough estimate: 45 min - 1.5 hr)")
+    run_with_heartbeat(["haddock3", cfg_path], run_dir=haddock_run_dir, step_plan=STEP_PLAN, label=candidate_name)
 
     print_capri_summary(haddock_run_dir)
+
+    _, rows = read_final_capri_rows(haddock_run_dir)
+    if rows:
+        with open(RESULTS_CSV, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(["name", "cluster_rank", "cluster_id", "n", "score", "dockq", "irmsd", "fnat", "lrmsd"])
+            for r in rows:
+                writer.writerow([candidate_name, r["caprieval_rank"], r["cluster_id"], r["n"],
+                                  r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
+        print(f"Wrote {RESULTS_CSV}")
 
 
 if __name__ == "__main__":

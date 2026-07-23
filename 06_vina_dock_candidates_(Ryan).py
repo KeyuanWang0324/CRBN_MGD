@@ -6,7 +6,7 @@ the HADDOCK3 ternary-docking step (see 07_haddock3_ternary_novel_candidate_(Ryan
 Run with the SYSTEM python (has vina/meeko/rdkit installed), not the
 haddock3 venv:
     /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
-        "06_dock_candidate_crbn_(Ryan).py"
+        "06_vina_dock_candidates_(Ryan).py"
 
 CRBN receptor: CRBN_receptor_thalidomide_Ryan.pdb (CRBN chain A, apo of
 ligand, built in 05_haddock3_ternary_test_(Ryan).py). Box is centered on
@@ -77,11 +77,10 @@ CRBN_RECEPTOR_PDB = os.path.join(SCRIPT_DIR, "CRBN_receptor_thalidomide_Ryan.pdb
 PPIL4_SOURCE_PDB = os.path.join(SCRIPT_DIR, "PPIL4_alphafold_(Ryan).pdb")
 OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
 SCREENING_SUMMARY_CSV = os.path.join(OUT_DIR, "screening_summary.csv")
-# Root-level copy, alongside the project's other *_(Ryan).csv outputs
-# (03_mgd_scores_for_04_(Ryan).csv, 04_crbn_binder_scores_(Ryan).csv, ...) --
-# the docking_tmp copy above stays put too, next to the raw per-candidate
-# poses/contacts it's derived from.
-SCREENING_SUMMARY_CSV_ROOT = os.path.join(SCRIPT_DIR, "screening_scores_(Ryan).csv")
+# Root-level copy, named after this script per project convention (consumed
+# by 07) -- the docking_tmp copy above stays put too, next to the raw
+# per-candidate poses/contacts it's derived from.
+SCREENING_SUMMARY_CSV_ROOT = os.path.join(SCRIPT_DIR, "06_vina_screening_scores_for_07_(Ryan).csv")
 
 # Vina poses considered per protein when picking a mutually-compatible
 # CRBN/PPIL4 pair, and the max fraction of shared ligand-contact atoms
@@ -104,8 +103,9 @@ ACTIVE_CANDIDATES_CSV = os.path.join(SCRIPT_DIR, "04_active_candidates_for_06_(R
 # Cap how many of 04_active_candidates_for_06_(Ryan).csv's rows get docked, since each
 # one costs two Vina dockings (CRBN + PPIL4). The file is already sorted by
 # combined_rank (best first, see build_active_candidates() in 04), so this
-# keeps the top N. Set to None to run all of them.
-MAX_CANDIDATES = 50
+# keeps the top TOP_FRACTION of it -- e.g. 0.5 keeps the best 50%. Set to
+# None (or 1.0) to run all of them.
+TOP_FRACTION = 0.5
 
 
 def load_candidates():
@@ -114,9 +114,10 @@ def load_candidates():
         with open(ACTIVE_CANDIDATES_CSV) as f:
             candidates = [(row["name"], row["smiles"]) for row in csv.DictReader(f)]
         print(f"Loaded {len(candidates)} candidates from {ACTIVE_CANDIDATES_CSV}")
-        if MAX_CANDIDATES is not None and len(candidates) > MAX_CANDIDATES:
-            candidates = candidates[:MAX_CANDIDATES]
-            print(f"Capped to top {MAX_CANDIDATES} by combined_rank (MAX_CANDIDATES)")
+        if TOP_FRACTION is not None and TOP_FRACTION < 1.0:
+            n_keep = max(1, round(len(candidates) * TOP_FRACTION))
+            candidates = candidates[:n_keep]
+            print(f"Capped to top {n_keep} ({TOP_FRACTION:.0%}) by combined_rank (TOP_FRACTION)")
         return candidates
     print(f"{ACTIVE_CANDIDATES_CSV} not found -- using the single fallback candidate. "
           "Run 01, then 03 and 04, to generate a real screened candidate list.")
@@ -382,7 +383,7 @@ def check_environment():
             f"  {sys.executable}\n"
             "This script needs the SYSTEM python, not the .venv-haddock3 venv. Run:\n"
             '  /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 '
-            '"06_dock_candidate_crbn_(Ryan).py"'
+            '"06_vina_dock_candidates_(Ryan).py"'
         )
 
 
