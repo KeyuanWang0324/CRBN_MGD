@@ -27,6 +27,7 @@ import sys
 import threading
 import time
 
+SCRIPT_START_TIME = time.time()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # This script needs the haddock3/pdb-tools CLIs (haddock3, haddock3-restraints,
@@ -411,6 +412,9 @@ ambig_fname = "{ambig_tbl}"
                 writer.writerow([candidate_name, r["caprieval_rank"], r["cluster_id"], r["n"],
                                   r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
         print(f"Wrote {RESULTS_CSV}")
+
+    total = time.time() - SCRIPT_START_TIME
+    print(f"Total script runtime: {total:.0f}s ({total / 60:.1f} min)")
 
 
 if __name__ == "__main__":

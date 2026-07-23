@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 
+SCRIPT_START_TIME = time.time()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # This script needs the haddock3/pdb-tools CLIs (haddock3, haddock3-restraints,
@@ -366,10 +367,15 @@ def main():
     write_actpass_file(ppil4_active, ppil4_passive, ppil4_actpass)
 
     results = []
+    candidates_loop_start = time.time()
     for i, candidate in enumerate(selected, 1):
         remaining = len(selected) - i
         label = f"{candidate['name']}, {i}/{len(selected)}, {remaining} left"
-        print(f"\n[{label}]")
+        elapsed_so_far = time.time() - candidates_loop_start
+        avg_per_candidate = elapsed_so_far / (i - 1) if i > 1 else None
+        eta_str = f"~{avg_per_candidate * remaining:.0f}s remaining for the run" if avg_per_candidate else "remaining time unknown until candidate 1 finishes"
+        print(f"\n[{label}] ({elapsed_so_far:.0f}s elapsed this run, {eta_str} | "
+              f"{time.time() - SCRIPT_START_TIME:.0f}s total script time)")
         candidate_vina_dir = os.path.join(VINA_OUT_DIR, candidate["name"])
         with open(os.path.join(candidate_vina_dir, "crbn_contacts.txt")) as f:
             crbn_active = [int(x) for x in f.readline().split()]
@@ -399,6 +405,9 @@ def main():
             writer.writerow([r["name"], r["crbn_affinity"], r["ppil4_affinity"], r["combined_affinity"],
                               r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
     print(f"Wrote {RESULTS_CSV}")
+
+    total = time.time() - SCRIPT_START_TIME
+    print(f"Total script runtime: {total:.0f}s ({total / 60:.1f} min)")
 
 
 if __name__ == "__main__":

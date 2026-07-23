@@ -33,6 +33,7 @@ import warnings
 
 import numpy as np
 
+SCRIPT_START_TIME = time.time()
 SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
 
 
@@ -1007,7 +1008,8 @@ def score_candidates(candidates, crbn_glue_clf, tmp_dir):
         elapsed = time.time() - start
         eta = (elapsed / (i - 1)) * (len(candidates) - i + 1) if i > 1 else 0
         print(f"[{i}/{len(candidates)}] Docking {name} ... "
-              f"({elapsed:.0f}s elapsed, ~{eta:.0f}s remaining)")
+              f"({elapsed:.0f}s in this step, ~{eta:.0f}s remaining | "
+              f"{time.time() - SCRIPT_START_TIME:.0f}s total script time)")
         row = {"name": name, "smiles": smiles}
 
         fp = smiles_to_fingerprint(smiles)
@@ -1155,3 +1157,6 @@ if __name__ == "__main__":
         results = score_candidates(candidates, crbn_glue_clf, tmp_dir=os.path.join(SCRIPT_DIR, "docking_tmp"))
         print_results_table(results)
         write_results_csv(results, RESULTS_CSV)
+
+    total = time.time() - SCRIPT_START_TIME
+    print(f"\nTotal script runtime: {total:.0f}s ({total / 60:.1f} min)")

@@ -17,6 +17,7 @@ import random
 import sys
 import time
 
+SCRIPT_START_TIME = time.time()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
 
@@ -130,6 +131,8 @@ def main():
 
     print(f"Generated {len(analogs)} valid, unique analog SMILES ({attempts} attempts)")
     print(f"Wrote {OUTPUT_CSV}")
+    total = time.time() - SCRIPT_START_TIME
+    print(f"Total script runtime: {total:.0f}s ({total / 60:.1f} min)")
 
 
 if __name__ == "__main__":

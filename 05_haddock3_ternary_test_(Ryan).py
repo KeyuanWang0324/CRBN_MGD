@@ -29,6 +29,7 @@ import sys
 import threading
 import time
 
+SCRIPT_START_TIME = time.time()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 # This script needs the haddock3/pdb-tools CLIs (haddock3, haddock3-restraints,
@@ -385,6 +386,8 @@ ambig_fname = "{ambig_tbl}"
 
     print_capri_summary(haddock_run_dir)
     print("== Done. See:", haddock_run_dir)
+    total = time.time() - SCRIPT_START_TIME
+    print(f"Total script runtime: {total:.0f}s ({total / 60:.1f} min)")
 
 
 if __name__ == "__main__":

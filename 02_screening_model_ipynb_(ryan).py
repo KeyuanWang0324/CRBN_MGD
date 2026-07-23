@@ -28,6 +28,7 @@ import os
 import sys
 import time
 
+SCRIPT_START_TIME = time.time()
 SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
 
 
@@ -119,7 +120,8 @@ def fetch_all_activities(target_chembl_id, batch_size=1000):
         all_records.extend(activities)
 
         total = data["page_meta"]["total_count"]
-        print(f"  ... fetched {len(all_records)}/{total} activity records")
+        print(f"  ... fetched {len(all_records)}/{total} activity records "
+              f"({time.time() - SCRIPT_START_TIME:.0f}s elapsed)")
         offset += batch_size
         if offset >= total:
             break
@@ -226,7 +228,8 @@ if __name__ == "__main__":
 
     for i, record in enumerate(records, 1):
         if i % 200 == 0:
-            print(f"  ... processed {i}/{len(records)} records")
+            print(f"  ... processed {i}/{len(records)} records "
+                  f"({time.time() - SCRIPT_START_TIME:.0f}s elapsed)")
 
         smiles = record.get("canonical_smiles")
         if not smiles:
@@ -363,3 +366,6 @@ if __name__ == "__main__":
 
     print("\n=== Summary ===")
     print(f"Held-out Test AUC:  {test_auc:.4f}")
+
+    total = time.time() - SCRIPT_START_TIME
+    print(f"\nTotal script runtime: {total:.0f}s ({total / 60:.1f} min)")

@@ -22,6 +22,7 @@ import sys
 import time
 from collections import defaultdict
 
+SCRIPT_START_TIME = time.time()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
 
@@ -216,7 +217,8 @@ def score_candidates_file(clf, candidates_csv, out_csv):
         lines = f.readlines()
     for i, line in enumerate(lines):
         if i % 100 == 0:
-            print(f"  ... scored {i}/{len(lines)} candidates")
+            print(f"  ... scored {i}/{len(lines)} candidates "
+                  f"({time.time() - SCRIPT_START_TIME:.0f}s elapsed)")
         smiles = line.strip()
         if not smiles:
             continue
@@ -310,7 +312,8 @@ def main():
     X_rows, y_rows, kept_smiles = [], [], []
     for i, (smiles, label) in enumerate(zip(smiles_list, labels), 1):
         if i % 200 == 0:
-            print(f"  ... fingerprinted {i}/{len(smiles_list)} compounds")
+            print(f"  ... fingerprinted {i}/{len(smiles_list)} compounds "
+                  f"({time.time() - SCRIPT_START_TIME:.0f}s elapsed)")
         fp = smiles_to_fingerprint(smiles)
         if fp is None:
             continue
@@ -371,6 +374,9 @@ def main():
         else:
             print(f"\n{MGD_SCORES_CSV} not found -- run 03 first to also build "
                   f"{ACTIVE_CANDIDATES_CSV} for 06.")
+
+    total = time.time() - SCRIPT_START_TIME
+    print(f"\nTotal script runtime: {total:.0f}s ({total / 60:.1f} min)")
 
 
 if __name__ == "__main__":

@@ -48,6 +48,7 @@ import subprocess
 import sys
 import time
 
+SCRIPT_START_TIME = time.time()
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SYSTEM_PYTHON = "/Library/Frameworks/Python.framework/Versions/3.12/bin/python3"
 
@@ -417,7 +418,8 @@ def main():
         elapsed = time.time() - loop_start
         eta = (elapsed / (i - 1)) * (len(CANDIDATES) - i + 1) if i > 1 else 0
         print(f"\n== [{i}/{len(CANDIDATES)}] Candidate: {candidate_name} "
-              f"({elapsed:.0f}s elapsed, ~{eta:.0f}s remaining) ==")
+              f"({elapsed:.0f}s in this step, ~{eta:.0f}s remaining | "
+              f"{time.time() - SCRIPT_START_TIME:.0f}s total script time) ==")
         candidate_dir = os.path.join(OUT_DIR, candidate_name)
         os.makedirs(candidate_dir, exist_ok=True)
 
@@ -493,6 +495,9 @@ def main():
                 writer.writerow([r["name"], r["crbn_affinity"], r["ppil4_affinity"], r["combined_affinity"],
                                   r["overlap"], r["consistent"], r["n_contacts"], ",".join(r["overlap_atoms"])])
         print(f"Wrote {out_path}")
+
+    total = time.time() - SCRIPT_START_TIME
+    print(f"\nTotal script runtime: {total:.0f}s ({total / 60:.1f} min)")
 
 
 if __name__ == "__main__":
