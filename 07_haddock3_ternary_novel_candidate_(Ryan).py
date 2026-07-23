@@ -167,7 +167,12 @@ def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, label=Non
     hung. If run_dir/step_plan are given, reports step name and % complete
     (see estimate_progress); otherwise just prints elapsed time. `label`
     (e.g. "cand_42, 3/20, 17 left") is prefixed on each line so it's clear
-    which candidate a given update belongs to."""
+    which candidate a given update belongs to.
+
+    HADDOCK3's own console output (the startup banner, per-module INFO
+    lines) is redirected to a log file next to run_dir instead of showing
+    here, so only our concise status lines print. On failure, the log's
+    path and tail are printed for diagnosis before re-raising."""
     prefix = f"[{label}] " if label else ""
     start = time.time()
     stop = threading.Event()
@@ -189,8 +194,19 @@ def run_with_heartbeat(cmd, run_dir=None, step_plan=None, interval=20, label=Non
 
     thread = threading.Thread(target=heartbeat, daemon=True)
     thread.start()
+    log_path = os.path.join(os.path.dirname(run_dir), "haddock3_stdout.log") if run_dir else None
     try:
-        subprocess.run(cmd, check=True, **kwargs)
+        if log_path:
+            with open(log_path, "w") as log_f:
+                subprocess.run(cmd, check=True, stdout=log_f, stderr=subprocess.STDOUT, **kwargs)
+        else:
+            subprocess.run(cmd, check=True, **kwargs)
+    except subprocess.CalledProcessError:
+        if log_path:
+            print(f"{prefix}HADDOCK3 failed -- last output from {log_path}:")
+            with open(log_path) as log_f:
+                print("".join(log_f.readlines()[-30:]))
+        raise
     finally:
         stop.set()
         thread.join()
