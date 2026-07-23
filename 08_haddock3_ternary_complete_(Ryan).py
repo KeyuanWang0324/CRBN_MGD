@@ -315,29 +315,34 @@ def pick_candidate_names():
 
 
 def write_results_csv(all_rows):
-    """all_rows: list of (candidate_name, capri_row) tuples, accumulated
-    across candidates. Written after every candidate so a later candidate's
-    failure can't lose earlier candidates' results."""
+    """all_rows: list of (candidate_name, top_capri_row_or_None) pairs, one
+    per candidate (its rank-1, best-score cluster -- not every cluster),
+    accumulated as candidates finish. Written after every candidate so a
+    later candidate's failure can't lose earlier candidates' results."""
     with open(RESULTS_CSV, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["name", "cluster_rank", "cluster_id", "n", "score", "dockq", "irmsd", "fnat", "lrmsd"])
         for candidate_name, r in all_rows:
-            writer.writerow([candidate_name, r["caprieval_rank"], r["cluster_id"], r["n"],
-                              r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
+            if r is None:
+                writer.writerow([candidate_name, "-", "-", "-", "-", "-", "-", "-", "-"])
+            else:
+                writer.writerow([candidate_name, r["caprieval_rank"], r["cluster_id"], r["n"],
+                                  r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
     print(f"Wrote {RESULTS_CSV}")
 
 
 def run_candidate(candidate_name, ppil4_actpass, label):
     """Run the complete HADDOCK3 routine for one candidate against the
     (already-computed, candidate-independent) PPIL4 restraints. Returns the
-    final caprieval cluster rows (possibly empty if setup/HADDOCK3 fails)."""
+    top (rank-1, best-score) cluster row, or None if setup/HADDOCK3 fails or
+    no cluster was found."""
     print(f"[{label}] step 0/{len(STEP_PLAN)}: preparing restraints/config")
 
     candidate_vina_dir = os.path.join(VINA_OUT_DIR, candidate_name)
     contacts_path = os.path.join(candidate_vina_dir, "crbn_contacts.txt")
     if not os.path.exists(contacts_path):
         print(f"[{label}] {contacts_path} not found -- run 06 for this candidate first. Skipping.")
-        return []
+        return None
     with open(contacts_path) as f:
         crbn_active = [int(x) for x in f.readline().split()]
 
@@ -411,7 +416,7 @@ ambig_fname = "{ambig_tbl}"
 
     print_capri_summary(haddock_run_dir)
     _, rows = read_final_capri_rows(haddock_run_dir)
-    return rows or []
+    return rows[0] if rows else None
 
 
 def main():
@@ -447,12 +452,12 @@ def main():
               f"{(time.time() - SCRIPT_START_TIME) / 60:.1f} min total script time)")
 
         try:
-            rows = run_candidate(candidate_name, ppil4_actpass, label)
+            top_row = run_candidate(candidate_name, ppil4_actpass, label)
         except subprocess.CalledProcessError:
             print(f"[{label}] HADDOCK3 failed for this candidate -- skipping it and continuing with the rest.")
-            rows = []
+            top_row = None
 
-        all_rows.extend((candidate_name, r) for r in rows)
+        all_rows.append((candidate_name, top_row))
         write_results_csv(all_rows)
 
     total = time.time() - SCRIPT_START_TIME
