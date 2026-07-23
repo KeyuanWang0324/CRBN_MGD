@@ -1,18 +1,19 @@
 """
 COMPLETE HADDOCK3 ternary-docking routine (full sampling + emref + clustfcc)
-for a single CRBN-glue candidate vs PPIL4.
+for the top-ranked CRBN-glue candidates vs PPIL4.
 
 06_vina_dock_candidates_(Ryan).py and 07_haddock3_ternary_novel_candidate_(Ryan).py
 run a cheap, truncated HADDOCK3 config (rigidbody sampling=20, flexref on the
 top 10, no emref, no clustering) to rank many candidates quickly. This script
 runs the COMPLETE stock HADDOCK3 protein-protein routine instead -- rigidbody
 sampling=1000, flexref + emref refinement on the top 200, then clustfcc
-clustering -- but only on ONE candidate: the finalist you pick after looking
-at 07's comparison table.
+clustering -- on the top TOP_N candidates (best dockq) from 07's comparison
+table, one after another. Set CANDIDATE_NAME to run a single specific
+candidate instead.
 
-This is far more expensive than 06/07 (rough estimate: 45 min - 1.5 hr on an
-18-core machine, vs. ~3 min for 07's lite pass per candidate) -- run it on
-the finalist only, not as a screen.
+This is far more expensive than 06/07 (rough estimate: 45 min - 1.5 hr per
+candidate on an 18-core machine, vs. ~3 min for 07's lite pass) -- keep
+TOP_N small (a handful of finalists), not a full screen.
 
 Run in the haddock3 venv:
     source .venv-haddock3/bin/activate
@@ -48,7 +49,7 @@ from Bio.Align import substitution_matrices
 
 VINA_OUT_DIR = os.path.join(SCRIPT_DIR, "docking_tmp", "haddock3_novel_candidate")
 # Used only for the crbn_contacts.txt each candidate's restraints are built
-# from -- not for auto-picking a candidate, see pick_candidate_name() below.
+# from -- not for auto-picking candidates, see pick_candidate_names() below.
 VINA_SCREENING_CSV = os.path.join(SCRIPT_DIR, "06_vina_screening_scores_for_07_(Ryan).csv")
 # 07's ranked output (best dockq first) -- the primary source for auto-
 # picking a finalist when CANDIDATE_NAME is left blank.
@@ -57,11 +58,16 @@ TERNARY_SCORES_CSV = os.path.join(SCRIPT_DIR, "07_ternary_docking_scores_for_08_
 # Terminal file (nothing downstream reads it), so no "_for_XX" suffix.
 RESULTS_CSV = os.path.join(SCRIPT_DIR, "08_final_ternary_results_(Ryan).csv")
 
-# Set this to the winning candidate's name from 07's final comparison table
-# (best dockq). Leave blank to auto-pick the best-dockq candidate from
-# TERNARY_SCORES_CSV instead (falling back to 06's best combined_affinity
-# if 07 hasn't been run yet).
+# Set this to a specific candidate's name from 07's comparison table to run
+# only that one (bypasses TOP_N entirely). Leave blank to auto-pick the top
+# TOP_N candidates by dockq from TERNARY_SCORES_CSV instead (falling back to
+# 06's best combined_affinity if 07 hasn't been run yet).
 CANDIDATE_NAME = ""
+
+# How many of 07's top-ranked (by dockq) candidates to run the complete
+# routine on, when CANDIDATE_NAME is left blank. Each candidate costs
+# ~45 min - 1.5 hr, so raise/lower with total run time in mind.
+TOP_N = 5
 
 # CNS's "@@" include syntax truncates paths at "(" -- keep this filename
 # parenthesis-free since it's fed directly to HADDOCK3 as a molecule.
@@ -278,18 +284,19 @@ def print_capri_summary(haddock_run_dir):
     print_table(rows, CAPRI_COLUMNS, title=f"Final CAPRI cluster results ({os.path.basename(final_dir)})")
 
 
-def pick_candidate_name():
+def pick_candidate_names():
     if CANDIDATE_NAME:
-        return CANDIDATE_NAME
+        return [CANDIDATE_NAME]
 
     if os.path.exists(TERNARY_SCORES_CSV):
         with open(TERNARY_SCORES_CSV, newline="") as f:
             rows = [r for r in csv.DictReader(f) if r["dockq"] != "-"]
         if rows:
-            best = max(rows, key=lambda r: float(r["dockq"]))
-            print(f"CANDIDATE_NAME not set -- auto-selecting '{best['name']}' (best dockq "
-                  f"{float(best['dockq']):.3f}) from {TERNARY_SCORES_CSV}.")
-            return best["name"]
+            rows.sort(key=lambda r: float(r["dockq"]), reverse=True)
+            names = [r["name"] for r in rows[:TOP_N]]
+            print(f"CANDIDATE_NAME not set -- auto-selecting top {len(names)} by dockq from "
+                  f"{TERNARY_SCORES_CSV}: {', '.join(names)}")
+            return names
         print(f"{TERNARY_SCORES_CSV} has no usable dockq rows -- falling back to 06's screening scores.")
 
     if not os.path.exists(VINA_SCREENING_CSV):
@@ -299,30 +306,40 @@ def pick_candidate_name():
         rows = list(csv.DictReader(f))
     if not rows:
         sys.exit(f"No rows in {VINA_SCREENING_CSV} -- run 06 first, or set CANDIDATE_NAME directly.")
-    best = min(rows, key=lambda r: float(r["combined_affinity"]))
-    print(f"CANDIDATE_NAME not set -- auto-selecting '{best['name']}' (best combined_affinity "
-          f"{float(best['combined_affinity']):.2f} kcal/mol) from 06's screening scores "
-          "-- run 07 for a dockq-based pick instead. "
-          "Set CANDIDATE_NAME explicitly to run a different candidate.")
-    return best["name"]
+    rows.sort(key=lambda r: float(r["combined_affinity"]))
+    names = [r["name"] for r in rows[:TOP_N]]
+    print(f"CANDIDATE_NAME not set -- auto-selecting top {len(names)} by combined_affinity from "
+          "06's screening scores -- run 07 for a dockq-based pick instead. "
+          "Set CANDIDATE_NAME explicitly to run a single specific candidate.")
+    return names
 
 
-def main():
-    os.makedirs(RUN_DIR_BASE, exist_ok=True)
-    candidate_name = pick_candidate_name()
-    print(f"[{candidate_name}] step 0/{len(STEP_PLAN)}: preparing restraints/config")
+def write_results_csv(all_rows):
+    """all_rows: list of (candidate_name, capri_row) tuples, accumulated
+    across candidates. Written after every candidate so a later candidate's
+    failure can't lose earlier candidates' results."""
+    with open(RESULTS_CSV, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "cluster_rank", "cluster_id", "n", "score", "dockq", "irmsd", "fnat", "lrmsd"])
+        for candidate_name, r in all_rows:
+            writer.writerow([candidate_name, r["caprieval_rank"], r["cluster_id"], r["n"],
+                              r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
+    print(f"Wrote {RESULTS_CSV}")
+
+
+def run_candidate(candidate_name, ppil4_actpass, label):
+    """Run the complete HADDOCK3 routine for one candidate against the
+    (already-computed, candidate-independent) PPIL4 restraints. Returns the
+    final caprieval cluster rows (possibly empty if setup/HADDOCK3 fails)."""
+    print(f"[{label}] step 0/{len(STEP_PLAN)}: preparing restraints/config")
 
     candidate_vina_dir = os.path.join(VINA_OUT_DIR, candidate_name)
     contacts_path = os.path.join(candidate_vina_dir, "crbn_contacts.txt")
     if not os.path.exists(contacts_path):
-        sys.exit(f"{contacts_path} not found -- run 06 for this candidate first.")
+        print(f"[{label}] {contacts_path} not found -- run 06 for this candidate first. Skipping.")
+        return []
     with open(contacts_path) as f:
         crbn_active = [int(x) for x in f.readline().split()]
-
-    with open(PPIL4_PDB, "w") as out:
-        run(["pdb_chain", "-B", PPIL4_SOURCE_PDB], stdout=out)
-
-    ppil4_active = ppil4_pocket_residues()
 
     crbn_active_csv = ",".join(str(r) for r in crbn_active)
     # Use the receptor-only PDB (no ligand atoms) for passive_from_active --
@@ -334,20 +351,11 @@ def main():
     ).stdout.strip()
     crbn_passive = [int(x) for x in crbn_passive_out.split()] if crbn_passive_out else []
 
-    ppil4_active_csv = ",".join(str(r) for r in ppil4_active)
-    ppil4_passive_out = subprocess.run(
-        ["haddock3-restraints", "passive_from_active", PPIL4_PDB, ppil4_active_csv, "-c", "B"],
-        check=True, capture_output=True, text=True,
-    ).stdout.strip()
-    ppil4_passive = [int(x) for x in ppil4_passive_out.split()] if ppil4_passive_out else []
-
     candidate_run_dir = os.path.join(RUN_DIR_BASE, candidate_name)
     os.makedirs(candidate_run_dir, exist_ok=True)
 
     crbn_actpass = os.path.join(candidate_run_dir, "crbn_actpass.txt")
     write_actpass_file(crbn_active, crbn_passive, crbn_actpass)
-    ppil4_actpass = os.path.join(candidate_run_dir, "ppil4_actpass.txt")
-    write_actpass_file(ppil4_active, ppil4_passive, ppil4_actpass)
 
     ambig_tbl = os.path.join(candidate_run_dir, "ambig.tbl")
     with open(ambig_tbl, "w") as out:
@@ -398,23 +406,57 @@ ambig_fname = "{ambig_tbl}"
 
     if os.path.exists(haddock_run_dir):
         shutil.rmtree(haddock_run_dir)
-    print(f"[{candidate_name}] starting HADDOCK3 (rough estimate: 45 min - 1.5 hr)")
-    run_with_heartbeat(["haddock3", cfg_path], run_dir=haddock_run_dir, step_plan=STEP_PLAN, label=candidate_name)
+    print(f"[{label}] starting HADDOCK3 (rough estimate: 45 min - 1.5 hr)")
+    run_with_heartbeat(["haddock3", cfg_path], run_dir=haddock_run_dir, step_plan=STEP_PLAN, label=label)
 
     print_capri_summary(haddock_run_dir)
-
     _, rows = read_final_capri_rows(haddock_run_dir)
-    if rows:
-        with open(RESULTS_CSV, "w", newline="") as f:
-            writer = csv.writer(f)
-            writer.writerow(["name", "cluster_rank", "cluster_id", "n", "score", "dockq", "irmsd", "fnat", "lrmsd"])
-            for r in rows:
-                writer.writerow([candidate_name, r["caprieval_rank"], r["cluster_id"], r["n"],
-                                  r["score"], r["dockq"], r["irmsd"], r["fnat"], r["lrmsd"]])
-        print(f"Wrote {RESULTS_CSV}")
+    return rows or []
+
+
+def main():
+    os.makedirs(RUN_DIR_BASE, exist_ok=True)
+    candidate_names = pick_candidate_names()
+    print(f"Running the complete HADDOCK3 routine on {len(candidate_names)} candidate(s): "
+          f"{', '.join(candidate_names)}")
+
+    # PPIL4-side restraints don't depend on the candidate -- compute once,
+    # not once per candidate.
+    with open(PPIL4_PDB, "w") as out:
+        run(["pdb_chain", "-B", PPIL4_SOURCE_PDB], stdout=out)
+    ppil4_active = ppil4_pocket_residues()
+    ppil4_active_csv = ",".join(str(r) for r in ppil4_active)
+    ppil4_passive_out = subprocess.run(
+        ["haddock3-restraints", "passive_from_active", PPIL4_PDB, ppil4_active_csv, "-c", "B"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    ppil4_passive = [int(x) for x in ppil4_passive_out.split()] if ppil4_passive_out else []
+    ppil4_actpass = os.path.join(RUN_DIR_BASE, "ppil4_actpass.txt")
+    write_actpass_file(ppil4_active, ppil4_passive, ppil4_actpass)
+
+    all_rows = []
+    candidates_loop_start = time.time()
+    for i, candidate_name in enumerate(candidate_names, 1):
+        remaining = len(candidate_names) - i
+        elapsed_so_far = time.time() - candidates_loop_start
+        avg_per_candidate = elapsed_so_far / (i - 1) if i > 1 else None
+        eta_str = (f"~{avg_per_candidate * remaining / 60:.0f} min remaining for the run"
+                   if avg_per_candidate else "remaining time unknown until candidate 1 finishes")
+        label = f"{candidate_name}, {i}/{len(candidate_names)}, {remaining} left"
+        print(f"\n[{label}] ({elapsed_so_far / 60:.1f} min elapsed this run, {eta_str} | "
+              f"{(time.time() - SCRIPT_START_TIME) / 60:.1f} min total script time)")
+
+        try:
+            rows = run_candidate(candidate_name, ppil4_actpass, label)
+        except subprocess.CalledProcessError:
+            print(f"[{label}] HADDOCK3 failed for this candidate -- skipping it and continuing with the rest.")
+            rows = []
+
+        all_rows.extend((candidate_name, r) for r in rows)
+        write_results_csv(all_rows)
 
     total = time.time() - SCRIPT_START_TIME
-    print(f"Total script runtime: {total:.0f}s ({total / 60:.1f} min)")
+    print(f"\nTotal script runtime: {total:.0f}s ({total / 60:.1f} min)")
 
 
 if __name__ == "__main__":
