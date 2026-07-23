@@ -319,6 +319,27 @@ def pick_candidate_names():
     return names
 
 
+def load_existing_rows():
+    """Load whatever's already in RESULTS_CSV (from an earlier run covering
+    different candidates/ranks) so this run only adds to it -- never starts
+    from an empty file and overwrites prior results."""
+    if not os.path.exists(RESULTS_CSV):
+        return []
+    with open(RESULTS_CSV, newline="") as f:
+        rows = list(csv.DictReader(f))
+    loaded = []
+    for r in rows:
+        if r["dockq"] == "-":
+            loaded.append((r["name"], None))
+        else:
+            loaded.append((r["name"], {
+                "caprieval_rank": r["cluster_rank"], "cluster_id": r["cluster_id"], "n": r["n"],
+                "score": r["score"], "dockq": r["dockq"], "irmsd": r["irmsd"],
+                "fnat": r["fnat"], "lrmsd": r["lrmsd"],
+            }))
+    return loaded
+
+
 def write_results_csv(all_rows):
     """all_rows: list of (candidate_name, top_capri_row_or_None) pairs, one
     per candidate (its rank-1, best-score cluster -- not every cluster),
@@ -427,8 +448,21 @@ ambig_fname = "{ambig_tbl}"
 def main():
     os.makedirs(RUN_DIR_BASE, exist_ok=True)
     candidate_names = pick_candidate_names()
-    print(f"Running the complete HADDOCK3 routine on {len(candidate_names)} candidate(s): "
-          f"{', '.join(candidate_names)}")
+
+    all_rows = load_existing_rows()
+    existing_names = {name for name, _ in all_rows}
+    if existing_names:
+        print(f"{RESULTS_CSV} already has {len(existing_names)} candidate(s) -- keeping them, only adding new ones.")
+
+    new_candidates = [n for n in candidate_names if n not in existing_names]
+    already_done = [n for n in candidate_names if n in existing_names]
+    if already_done:
+        print(f"Skipping {len(already_done)} candidate(s) already in {RESULTS_CSV}: {', '.join(already_done)}")
+    if not new_candidates:
+        print("Nothing new to run.")
+        return
+    print(f"Running the complete HADDOCK3 routine on {len(new_candidates)} candidate(s): "
+          f"{', '.join(new_candidates)}")
 
     # PPIL4-side restraints don't depend on the candidate -- compute once,
     # not once per candidate.
@@ -444,15 +478,14 @@ def main():
     ppil4_actpass = os.path.join(RUN_DIR_BASE, "ppil4_actpass.txt")
     write_actpass_file(ppil4_active, ppil4_passive, ppil4_actpass)
 
-    all_rows = []
     candidates_loop_start = time.time()
-    for i, candidate_name in enumerate(candidate_names, 1):
-        remaining = len(candidate_names) - i
+    for i, candidate_name in enumerate(new_candidates, 1):
+        remaining = len(new_candidates) - i
         elapsed_so_far = time.time() - candidates_loop_start
         avg_per_candidate = elapsed_so_far / (i - 1) if i > 1 else None
         eta_str = (f"~{avg_per_candidate * remaining / 60:.0f} min remaining for the run"
                    if avg_per_candidate else "remaining time unknown until candidate 1 finishes")
-        label = f"{candidate_name}, {i}/{len(candidate_names)}, {remaining} left"
+        label = f"{candidate_name}, {i}/{len(new_candidates)}, {remaining} left"
         print(f"\n[{label}] ({elapsed_so_far / 60:.1f} min elapsed this run, {eta_str} | "
               f"{(time.time() - SCRIPT_START_TIME) / 60:.1f} min total script time)")
 
