@@ -66,8 +66,9 @@ CANDIDATE_NAME = ""
 
 # How many of 07's top-ranked (by dockq) candidates to run the complete
 # routine on, when CANDIDATE_NAME is left blank. Each candidate costs
-# ~45 min - 1.5 hr, so raise/lower with total run time in mind.
-TOP_N = 5
+# ~45 min - 1.5 hr, so raise/lower with total run time in mind. Default of
+# 20 covers every candidate in 07's output (07's own TOP_N).
+TOP_N = 20
 
 # CNS's "@@" include syntax truncates paths at "(" -- keep this filename
 # parenthesis-free since it's fed directly to HADDOCK3 as a molecule.
@@ -458,7 +459,11 @@ def main():
             top_row = None
 
         all_rows.append((candidate_name, top_row))
-        write_results_csv(all_rows)
+        write_results_csv(all_rows)  # unsorted, for resilience -- superseded by the sorted write below
+
+    # Best dockq first; candidates with no result (failed/skipped) sort last.
+    all_rows.sort(key=lambda pair: (pair[1] is None, -float(pair[1]["dockq"]) if pair[1] else 0))
+    write_results_csv(all_rows)
 
     total = time.time() - SCRIPT_START_TIME
     print(f"\nTotal script runtime: {total:.0f}s ({total / 60:.1f} min)")
